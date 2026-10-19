@@ -22,8 +22,9 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 
 ## 구조
 
-- `Galpi/`: 앱 타깃. `@main` 진입점과 에셋 카탈로그만 있습니다.
-- `GalpiKit/`: 앱 코드 전부가 들어 있는 Swift 패키지. Codex 연결, SQLite 저장소, 모델, 화면, 테스트.
+- `project.yml`: xcodegen 프로젝트 정의. 의존성과 빌드 설정이 여기 있습니다.
+- `Galpi/`: 앱 소스. `App`(진입점), `Codex`(app-server 연결), `Store`(SQLite), `Model`, `Views`.
+- `GalpiTests/`: 단위 테스트.
 - `spike/MarkdownSpike`: Markdown 스트리밍 렌더링을 검증한 POC.
 - `plan.md`: 제품 계획과 단계별 통과 조건.
 
@@ -44,7 +45,7 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 ## 개발 확인
 
 ```sh
-cd GalpiKit && swift test
+xcodebuild -project Galpi.xcodeproj -scheme Galpi -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode test
 ```
 
 Markdown 렌더링만 확인하려면 `spike/MarkdownSpike/run.sh`를 실행합니다.

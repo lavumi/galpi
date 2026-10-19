@@ -5,20 +5,21 @@ macOS용 개인 AI 대화 앱. 설치된 Codex CLI 의 app-server 를 자식 프
 ## 구조
 
 ```
-project.yml          xcodegen 정의. Galpi.xcodeproj 는 여기서 생성하며 커밋하지 않는다.
-Galpi/               앱 타깃. @main 진입점과 Assets.xcassets 만 둔다. 로직을 넣지 않는다.
-GalpiKit/            SwiftPM 라이브러리. 실제 앱 코드 전부와 테스트.
-  Sources/GalpiKit/
-    Codex/           app-server 프로세스, JSON-RPC, 연결 상태, 턴 실행
-    Store/           GRDB 기반 Database 와 Record 타입, 마이그레이션
-    Model/           AppModel(화면 조정자), ChatSession, StreamingMessage, ContextBudget
-    Views/           SwiftUI 화면
-  Tests/GalpiKitTests/
+project.yml          xcodegen 정의. 타깃, 의존성, 빌드 설정이 전부 여기 있다. Galpi.xcodeproj 는 생성물이라 커밋하지 않는다.
+Galpi/               앱 타깃 하나. 모듈을 나누지 않는다.
+  App/               @main 진입점
+  Codex/             app-server 프로세스, JSON-RPC, 연결 상태, 턴 실행
+  Store/             GRDB 기반 Database 와 Record 타입, 마이그레이션
+  Model/             AppModel(화면 조정자), ChatSession, StreamingMessage, ContextBudget
+  Views/             SwiftUI 화면
+  Assets.xcassets/
+GalpiTests/          단위 테스트. @testable import Galpi
 spike/               단계 0 렌더링 검증용 POC. 참고용으로만 두고 수정하지 않는다.
 ```
 
-- 앱 타깃이 쓰는 `public` 표면은 `AppModel.bootstrap/start/newChat/reconnect`, `MainView`, `SettingsView` 뿐이다. 그 외는 `internal` 로 두고 테스트는 `@testable import GalpiKit` 으로 접근한다. 새 타입을 `public` 으로 열어야 하면 먼저 제안한다.
-- 의존성은 GRDB 와 SwiftStreamingMarkdown 두 개다. SwiftStreamingMarkdown 은 상위가 HighlightSwift 를 커밋 고정으로 의존하므로 버전 범위 대신 커밋을 고정한다. 새 의존성 추가는 먼저 제안한다.
+- 단일 모듈이므로 접근 제어는 `private`/`internal` 만 쓴다. `public` 은 필요 없다.
+- 의존성은 GRDB 와 SwiftStreamingMarkdown 두 개이며 `project.yml` 의 `packages` 에 선언한다. SwiftStreamingMarkdown 은 상위가 HighlightSwift 를 커밋 고정으로 의존하므로 버전 범위 대신 커밋을 고정한다. 새 의존성 추가는 먼저 제안한다.
+- 코드가 커져 모듈 분리가 필요해지면 그때 로컬 패키지로 뽑는다. 미리 나누지 않는다.
 
 ## 빌드와 테스트
 
@@ -27,13 +28,12 @@ brew install xcodegen      # 최초 1회
 ./run.sh                   # 프로젝트 생성(필요 시) + 빌드 + 실행
 GALPI_NO_LAUNCH=1 ./run.sh # 빌드만
 xcodegen generate          # Xcode 로 열기 전에 프로젝트 생성/갱신
-cd GalpiKit && swift test  # 단위 테스트
+xcodebuild -project Galpi.xcodeproj -scheme Galpi -destination 'platform=macOS,arch=arm64' -derivedDataPath .build/xcode test
 ```
 
-- `project.yml` 이나 `GalpiKit/Package.swift` 를 바꾸면 `xcodegen generate` 를 다시 실행한다. `run.sh` 는 수정 시각을 보고 자동으로 한다.
-- 앱 번들은 반드시 xcodebuild 로 만든다. `swift build` 는 의존 패키지의 .xcassets 를 컴파일하지 않아 색이 비어 나온다.
-- 배포 대상은 `project.yml` 의 `deploymentTarget` 과 `GalpiKit/Package.swift` 의 `platforms` 두 곳에 있다. 둘을 같이 바꾼다. 현재는 Xcode 16.4 SDK 제약으로 15.0 이며, Xcode 26 설치 후 26.0 으로 올리는 것이 결정된 방향이다.
-- `GalpiKit` 은 Swift 6 툴체인에서 언어 모드 5 로 빌드한다. 동시성 경고를 고치기 위해 `@unchecked Sendable` 이나 `nonisolated(unsafe)` 를 뿌리지 않는다.
+- `project.yml` 을 바꾸면 `xcodegen generate` 를 다시 실행한다. `run.sh` 는 수정 시각을 보고 자동으로 한다.
+- 배포 대상은 `project.yml` 의 `deploymentTarget` 한 곳이다. 현재는 Xcode 16.4 SDK 제약으로 15.0 이며, Xcode 26 설치 후 26.0 으로 올리는 것이 결정된 방향이다.
+- Swift 6 툴체인에서 언어 모드 5(`SWIFT_VERSION: 5.0`)로 빌드한다. 동시성 경고를 고치기 위해 `@unchecked Sendable` 이나 `nonisolated(unsafe)` 를 뿌리지 않는다.
 
 ## 코드 규칙
 

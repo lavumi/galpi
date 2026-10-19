@@ -9,7 +9,7 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   echo "xcodegen 이 필요합니다: brew install xcodegen" >&2
   exit 1
 fi
-if [[ ! -d Galpi.xcodeproj || project.yml -nt Galpi.xcodeproj || GalpiKit/Package.swift -nt Galpi.xcodeproj ]]; then
+if [[ ! -d Galpi.xcodeproj || project.yml -nt Galpi.xcodeproj ]]; then
   xcodegen generate --quiet
 fi
 
@@ -38,4 +38,3 @@ if pgrep -f -x "$PWD/$APP_DIR/Contents/MacOS/Galpi" >/dev/null 2>&1; then
   exit 0
 fi
 exec "$APP_DIR/Contents/MacOS/Galpi"
-

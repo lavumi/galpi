@@ -11,7 +11,7 @@ enum SettingsKey {
 
 @MainActor
 @Observable
-public final class AppModel {
+final class AppModel {
   let codex: CodexService
   let db: Database
   let supportDirectory: URL
@@ -55,7 +55,7 @@ public final class AppModel {
   }
 
   /// 앱 시작 시 호출한다. 기록 DB를 열지 못하면 메모리 DB로라도 띄우고 그 사유를 함께 돌려준다.
-  public static func bootstrap() -> (model: AppModel, startupError: String?) {
+  static func bootstrap() -> (model: AppModel, startupError: String?) {
     do {
       return (try live(), nil)
     } catch {
@@ -66,11 +66,11 @@ public final class AppModel {
     }
   }
 
-  public func start() async {
+  func start() async {
     await codex.connect(executableOverride: UserDefaults.standard.string(forKey: SettingsKey.codexPath))
   }
 
-  public func reconnect() {
+  func reconnect() {
     Task { await start() }
   }
 
@@ -117,7 +117,7 @@ public final class AppModel {
     }
   }
 
-  public func newChat() {
+  func newChat() {
     selectedId = nil
     session = nil
     composerText = ""

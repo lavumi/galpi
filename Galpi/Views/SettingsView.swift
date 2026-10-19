@@ -1,15 +1,13 @@
 import SwiftUI
 
-public struct SettingsView: View {
+struct SettingsView: View {
   @Environment(AppModel.self) private var model
   @AppStorage(SettingsKey.codexPath) private var codexPath = ""
   @AppStorage(SettingsKey.defaultModel) private var defaultModel = ""
   @AppStorage(SettingsKey.defaultEffort) private var defaultEffort = ""
   @AppStorage(SettingsKey.newChatsPrivate) private var newChatsPrivate = false
 
-  public init() {}
-
-  public var body: some View {
+  var body: some View {
     Form {
       Section("연결") {
         LabeledContent("상태", value: model.codex.state.label)

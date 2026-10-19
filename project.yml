@@ -9,17 +9,29 @@ options:
   xcodeVersion: "16.4"
 
 packages:
-  GalpiKit:
-    path: GalpiKit
+  # 상위 패키지가 HighlightSwift 를 커밋 고정으로 의존하므로 버전 범위 대신 v0.7.0 커밋을 고정한다.
+  SwiftStreamingMarkdown:
+    url: https://github.com/microsoft/SwiftStreamingMarkdown
+    revision: 5f7c04e0558df6146f90d482edb62cb456986bda
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.9.0
+
+settings:
+  base:
+    # Swift 6 툴체인, 언어 모드 5. 동시성 검사를 올리는 건 별도 작업으로 한다.
+    SWIFT_VERSION: "5.0"
 
 targets:
   Galpi:
     type: application
     platform: macOS
     sources:
-      - path: Galpi
+      - Galpi
     dependencies:
-      - package: GalpiKit
+      - package: SwiftStreamingMarkdown
+      - package: GRDB
+        product: GRDB
     info:
       path: Galpi/Info.plist
       properties:
@@ -33,7 +45,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lavumi.galpi
-        SWIFT_VERSION: "6.0"
         # 개인 빌드이므로 임시 서명으로 로컬 실행만 한다. 배포 시 팀·공증을 별도로 설정한다.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
@@ -45,5 +56,15 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
     scheme:
       testTargets:
-        - package: GalpiKit/GalpiKitTests
+        - GalpiTests
 
+  GalpiTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - GalpiTests
+    dependencies:
+      - target: Galpi
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES

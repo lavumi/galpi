@@ -1,5 +1,5 @@
 import XCTest
-@testable import GalpiKit
+@testable import Galpi
 
 final class DatabaseTests: XCTestCase {
   func testTrashRestoreAndSearch() throws {

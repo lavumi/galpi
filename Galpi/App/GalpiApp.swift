@@ -1,5 +1,4 @@
 import AppKit
-import GalpiKit
 import SwiftUI
 
 @main

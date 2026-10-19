@@ -1,15 +1,11 @@
 import SwiftUI
 
-public struct MainView: View {
+struct MainView: View {
   @Environment(AppModel.self) private var model
   let startupError: String?
   @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
-  public init(startupError: String?) {
-    self.startupError = startupError
-  }
-
-  public var body: some View {
+  var body: some View {
     @Bindable var model = model
     NavigationSplitView(columnVisibility: $columnVisibility) {
       SidebarView()
