@@ -1,0 +1,12 @@
+# 빌드 산출물
+.build/
+DerivedData/
+*.profraw
+
+# xcodegen 이 project.yml 에서 생성한다. 커밋하지 않는다.
+/Galpi.xcodeproj
+/Galpi/Info.plist
+xcuserdata/
+.swiftpm/
+
+.DS_Store

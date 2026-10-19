@@ -1,0 +1,49 @@
+name: Galpi
+options:
+  bundleIdPrefix: com.lavumi
+  # Xcode 26 설치 후 "26.0" 으로 올린다. 그 전까지는 16.4 SDK 가 아는 최신 값만 쓸 수 있다.
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+  xcodeVersion: "16.4"
+
+packages:
+  GalpiKit:
+    path: GalpiKit
+
+targets:
+  Galpi:
+    type: application
+    platform: macOS
+    sources:
+      - path: Galpi
+    dependencies:
+      - package: GalpiKit
+    info:
+      path: Galpi/Info.plist
+      properties:
+        CFBundleDisplayName: 갈피
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSHighResolutionCapable: true
+        NSSupportsAutomaticTermination: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lavumi.galpi
+        SWIFT_VERSION: "6.0"
+        # 개인 빌드이므로 임시 서명으로 로컬 실행만 한다. 배포 시 팀·공증을 별도로 설정한다.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
+        # codex app-server 를 자식 프로세스로 띄우고 사용자의 ~/.codex 를 그대로 쓰므로 App Sandbox 는 켜지 않는다.
+        ENABLE_APP_SANDBOX: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        COMBINE_HIDPI_IMAGES: YES
+    scheme:
+      testTargets:
+        - package: GalpiKit/GalpiKitTests
+

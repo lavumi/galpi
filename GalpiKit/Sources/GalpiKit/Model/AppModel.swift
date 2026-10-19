@@ -1,0 +1,418 @@
+import Foundation
+import Observation
+import SwiftUI
+
+enum SettingsKey {
+  static let codexPath = "codexPath"
+  static let defaultModel = "defaultModel"
+  static let defaultEffort = "defaultEffort"
+  static let newChatsPrivate = "newChatsPrivate"
+}
+
+@MainActor
+@Observable
+public final class AppModel {
+  let codex: CodexService
+  let db: Database
+  let supportDirectory: URL
+
+  var scope: Database.Scope = .all {
+    didSet { reloadList() }
+  }
+  var query = "" {
+    didSet { reloadList() }
+  }
+  var hits: [SearchHit] = []
+  var counts: (all: Int, favorites: Int, archived: Int, trash: Int) = (0, 0, 0, 0)
+  var selectedId: String? {
+    didSet { if oldValue != selectedId { open(id: selectedId) } }
+  }
+  var session: ChatSession?
+  var composerText = ""
+  var nextChatPrivate: Bool
+  var pendingScrollMessageId: String?
+  var lastError: String?
+
+  /// 기록 안 남기기 대화는 여기만 산다. 앱을 끄면 사라진다.
+  private var ephemeralSessions: [String: ChatSession] = [:]
+  private var persistTask: Task<Void, Never>?
+
+  init(supportDirectory: URL, db: Database, codex: CodexService) {
+    self.supportDirectory = supportDirectory
+    self.db = db
+    self.codex = codex
+    self.nextChatPrivate = UserDefaults.standard.bool(forKey: SettingsKey.newChatsPrivate)
+    reloadList()
+  }
+
+  static func live() throws -> AppModel {
+    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("Galpi", isDirectory: true)
+    try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+    let db = try Database(path: base.appendingPathComponent("galpi.sqlite").path)
+    try db.recoverStreamingMessages()
+    return AppModel(supportDirectory: base, db: db, codex: CodexService(supportDirectory: base))
+  }
+
+  /// 앱 시작 시 호출한다. 기록 DB를 열지 못하면 메모리 DB로라도 띄우고 그 사유를 함께 돌려준다.
+  public static func bootstrap() -> (model: AppModel, startupError: String?) {
+    do {
+      return (try live(), nil)
+    } catch {
+      let fallback = try! Database.inMemory()
+      let base = FileManager.default.temporaryDirectory.appendingPathComponent("Galpi")
+      let model = AppModel(supportDirectory: base, db: fallback, codex: CodexService(supportDirectory: base))
+      return (model, "기록 저장소를 열지 못했습니다: \(error.localizedDescription)")
+    }
+  }
+
+  public func start() async {
+    await codex.connect(executableOverride: UserDefaults.standard.string(forKey: SettingsKey.codexPath))
+  }
+
+  public func reconnect() {
+    Task { await start() }
+  }
+
+  // MARK: - Settings
+
+  var defaultModel: String {
+    if let saved = UserDefaults.standard.string(forKey: SettingsKey.defaultModel), codex.models.contains(where: { $0.id == saved }) {
+      return saved
+    }
+    return codex.models.first(where: \.isDefault)?.id ?? codex.models.first?.id ?? ""
+  }
+
+  var defaultEffort: String? {
+    UserDefaults.standard.string(forKey: SettingsKey.defaultEffort)
+  }
+
+  // MARK: - List
+
+  func reloadList() {
+    do {
+      hits = try db.conversations(scope: scope, query: query)
+      counts = try db.counts()
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func open(id: String?) {
+    guard let id else {
+      session = nil
+      return
+    }
+    if session?.id == id { return }
+    if let ephemeral = ephemeralSessions[id] {
+      session = ephemeral
+      return
+    }
+    do {
+      guard let conversation = try db.conversation(id: id) else { session = nil; return }
+      let messages = try db.messages(conversationId: id)
+      session = ChatSession(conversation: conversation, messages: messages, isEphemeral: false)
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  public func newChat() {
+    selectedId = nil
+    session = nil
+    composerText = ""
+  }
+
+  // MARK: - Sending
+
+  func send(model: String, effort: String?) {
+    let prompt = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !prompt.isEmpty else { return }
+    guard !codex.isGenerating else {
+      lastError = TurnError.busy.localizedDescription
+      return
+    }
+    guard codex.state == .connected else {
+      lastError = "Codex에 연결된 뒤 보낼 수 있습니다. (\(codex.state.label))"
+      return
+    }
+    // 모델 목록이 늦게 와서 선택이 비어 있으면 기본 모델로 보낸다.
+    let model = model.isEmpty ? defaultModel : model
+    guard !model.isEmpty else {
+      lastError = "사용할 수 있는 모델이 없습니다. 연결 상태를 확인하세요."
+      return
+    }
+    let session = self.session ?? makeSession(firstPrompt: prompt, model: model, effort: effort, ephemeral: nextChatPrivate)
+    composerText = ""
+    session.errorMessage = nil
+    session.conversation.model = model
+    session.conversation.effort = effort
+
+    let userMessage = Message.new(conversationId: session.id, ordinal: nextOrdinal(session), role: .user, text: prompt, status: .complete, model: nil)
+    session.messages.append(userMessage)
+    persist(session, message: userMessage)
+
+    run(session, prompt: prompt, model: model, effort: effort)
+  }
+
+  func stop() {
+    codex.interrupt()
+  }
+
+  /// 실패했거나 비어 있는 답변을 지우고 같은 질문을 다시 보낸다.
+  func retry(messageId: String) {
+    guard let session, let index = session.messages.firstIndex(where: { $0.id == messageId }),
+          session.messages[index].role == .assistant, index > 0, !session.isGenerating else { return }
+    let prompt = session.messages[index - 1].text
+    let failed = session.messages.remove(at: index)
+    if !session.isEphemeral { try? db.deletePermanentlyMessage(id: failed.id) }
+    run(session, prompt: prompt, model: resolvedModel(session), effort: session.conversation.effort)
+  }
+
+  /// 해당 답변 직전까지 복사한 새 대화를 만들고 거기서 다시 생성한다. 원본은 그대로 둔다.
+  func regenerateAsNewConversation(assistantMessageId: String) {
+    guard let source = session, let index = source.messages.firstIndex(where: { $0.id == assistantMessageId }), index > 0,
+          !codex.isGenerating else { return }
+    let prompt = source.messages[index - 1].text
+    let copied = Array(source.messages[..<(index - 1)])
+    let branch = branchSession(from: source, messages: copied)
+    let userMessage = Message.new(conversationId: branch.id, ordinal: nextOrdinal(branch), role: .user, text: prompt, status: .complete, model: nil)
+    branch.messages.append(userMessage)
+    persist(branch, message: userMessage)
+    run(branch, prompt: prompt, model: resolvedModel(branch), effort: branch.conversation.effort)
+  }
+
+  /// 사용자 메시지 직전까지 복사한 새 대화를 열고 입력창에 원문을 넣는다.
+  func editAsNewConversation(userMessageId: String) {
+    guard let source = session, let index = source.messages.firstIndex(where: { $0.id == userMessageId }),
+          !codex.isGenerating else { return }
+    let original = source.messages[index].text
+    let copied = Array(source.messages[..<index])
+    _ = branchSession(from: source, messages: copied)
+    composerText = original
+  }
+
+  /// 저장 중인 대화에서 기록 안 남기기로 전환: 문맥을 메모리로 복사한 새 임시 대화를 연다.
+  func continuePrivately() {
+    guard let source = session, !source.isEphemeral, !codex.isGenerating else { return }
+    var conversation = Conversation.new(title: source.conversation.title, model: source.conversation.model, effort: source.conversation.effort)
+    conversation.originId = source.id
+    let messages = source.messages.enumerated().map { offset, m in
+      Message(id: UUID().uuidString, conversationId: conversation.id, ordinal: offset, role: m.role, text: m.text,
+              status: m.status, createdAt: m.createdAt, inputTokens: m.inputTokens, outputTokens: m.outputTokens, model: m.model)
+    }
+    let session = ChatSession(conversation: conversation, messages: messages, isEphemeral: true)
+    session.contextWindow = source.contextWindow
+    ephemeralSessions[session.id] = session
+    self.session = session
+    selectedId = nil
+  }
+
+  /// 임시 대화를 DB에 저장한다. 사용자가 명시적으로 선택한 경우에만 호출한다.
+  func saveEphemeral() {
+    guard let source = session, source.isEphemeral, !source.isGenerating else { return }
+    do {
+      let saved = ChatSession(conversation: source.conversation, messages: source.messages, isEphemeral: false)
+      saved.conversation.updatedAt = Date()
+      saved.conversation.preview = Database.preview(of: source.messages.last?.text ?? "")
+      try db.save(saved.conversation)
+      for message in saved.messages { try db.save(message, touching: saved.conversation) }
+      ephemeralSessions.removeValue(forKey: source.id)
+      session = saved
+      reloadList()
+      selectedId = saved.id
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  func discardEphemeral() {
+    guard let source = session, source.isEphemeral else { return }
+    if source.isGenerating { codex.interrupt() }
+    ephemeralSessions.removeValue(forKey: source.id)
+    session = nil
+  }
+
+  // MARK: - Conversation management
+
+  func rename(id: String, title: String) {
+    let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    if let session, session.id == id { session.conversation.title = trimmed }
+    if ephemeralSessions[id] == nil {
+      try? db.rename(id: id, title: trimmed)
+      reloadList()
+    }
+  }
+
+  func setFavorite(_ value: Bool, ids: Set<String>) { mutate(ids) { try db.setFavorite(value, ids: $0) } }
+  func setArchived(_ value: Bool, ids: Set<String>) { mutate(ids) { try db.setArchived(value, ids: $0) } }
+  func moveToTrash(ids: Set<String>) {
+    if let session, ids.contains(session.id), session.isGenerating { codex.interrupt() }
+    mutate(ids) { try db.moveToTrash(ids: $0) }
+    if let session, ids.contains(session.id) { self.session = nil; selectedId = nil }
+  }
+  func restore(ids: Set<String>) { mutate(ids) { try db.restore(ids: $0) } }
+  func deletePermanently(ids: Set<String>) {
+    mutate(ids) { try db.deletePermanently(ids: $0) }
+    if let session, ids.contains(session.id) { self.session = nil; selectedId = nil }
+  }
+  func emptyTrash() {
+    do { _ = try db.emptyTrash() } catch { lastError = error.localizedDescription }
+    if let session, session.conversation.deletedAt != nil { self.session = nil; selectedId = nil }
+    reloadList()
+  }
+
+  private func mutate(_ ids: Set<String>, _ op: ([String]) throws -> Void) {
+    let persisted = ids.filter { ephemeralSessions[$0] == nil }
+    guard !persisted.isEmpty else { return }
+    do { try op(Array(persisted)) } catch { lastError = error.localizedDescription }
+    if let session, persisted.contains(session.id), let fresh = try? db.conversation(id: session.id) {
+      session.conversation = fresh
+    }
+    reloadList()
+  }
+
+  // MARK: - Private helpers
+
+  private func makeSession(firstPrompt: String, model: String, effort: String?, ephemeral: Bool) -> ChatSession {
+    let title = Self.title(from: firstPrompt)
+    let conversation = Conversation.new(title: title, model: model, effort: effort)
+    let session = ChatSession(conversation: conversation, messages: [], isEphemeral: ephemeral)
+    if ephemeral {
+      ephemeralSessions[session.id] = session
+    } else {
+      try? db.save(conversation)
+    }
+    self.session = session
+    if !ephemeral { selectedId = session.id }
+    return session
+  }
+
+  private func branchSession(from source: ChatSession, messages: [Message]) -> ChatSession {
+    var conversation = Conversation.new(title: Self.branchTitle(source.conversation.title), model: source.conversation.model, effort: source.conversation.effort)
+    conversation.originId = source.id
+    conversation.folderId = source.conversation.folderId
+    conversation.isFavorite = source.conversation.isFavorite
+    let copied = messages.enumerated().map { offset, m in
+      Message(id: UUID().uuidString, conversationId: conversation.id, ordinal: offset, role: m.role, text: m.text,
+              status: m.status, createdAt: m.createdAt, inputTokens: m.inputTokens, outputTokens: m.outputTokens, model: m.model)
+    }
+    let session = ChatSession(conversation: conversation, messages: copied, isEphemeral: source.isEphemeral)
+    session.contextWindow = source.contextWindow
+    if source.isEphemeral {
+      ephemeralSessions[session.id] = session
+      self.session = session
+      selectedId = nil
+    } else {
+      do {
+        try db.save(conversation)
+        for message in copied { try db.save(message, touching: conversation) }
+      } catch { lastError = error.localizedDescription }
+      self.session = session
+      reloadList()
+      selectedId = session.id
+    }
+    return session
+  }
+
+  nonisolated static func title(from prompt: String) -> String {
+    let firstLine = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? prompt
+    let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
+    return trimmed.count > 40 ? String(trimmed.prefix(40)) + "…" : trimmed
+  }
+
+  nonisolated static func branchTitle(_ title: String) -> String {
+    if let match = title.range(of: #" \((\d+)\)$"#, options: .regularExpression) {
+      let number = Int(title[match].filter(\.isNumber)) ?? 1
+      return String(title[..<match.lowerBound]) + " (\(number + 1))"
+    }
+    return title + " (2)"
+  }
+
+  private func nextOrdinal(_ session: ChatSession) -> Int {
+    (session.messages.map(\.ordinal).max() ?? -1) + 1
+  }
+
+  private func resolvedModel(_ session: ChatSession) -> String {
+    if let m = session.conversation.model, !m.isEmpty { return m }
+    return defaultModel
+  }
+
+  private func persist(_ session: ChatSession, message: Message) {
+    guard !session.isEphemeral else { return }
+    do {
+      try db.save(message, touching: session.conversation)
+      reloadList()
+    } catch {
+      lastError = error.localizedDescription
+    }
+  }
+
+  private func run(_ session: ChatSession, prompt: String, model: String, effort: String?) {
+    let selection = ContextBudget.select(messages: session.messages.dropLast().filter { $0.status != .failed },
+                                         prompt: prompt, contextWindow: session.contextWindow)
+    session.contextNotice = selection.droppedTurns > 0
+      ? "문맥 예산을 넘어 오래된 \(selection.droppedTurns)개 턴은 이번 요청에 포함되지 않았습니다."
+      : nil
+
+    let assistant = Message.new(conversationId: session.id, ordinal: nextOrdinal(session), role: .assistant, text: "", status: .streaming, model: model)
+    session.messages.append(assistant)
+    persist(session, message: assistant)
+    let buffer = StreamingMessage()
+    session.streaming = buffer
+    session.streamingMessageId = assistant.id
+
+    Task { [weak self] in
+      guard let self else { return }
+      var lastPersist = Date()
+      var usage: (input: Int, output: Int, window: Int?)?
+      var threadID: String?
+      var finalStatus: MessageStatus = .complete
+      do {
+        for try await event in codex.runTurn(history: selection.items, prompt: prompt, model: model, effort: effort) {
+          switch event {
+          case .started(let tid, _):
+            threadID = tid
+          case .delta(let delta):
+            buffer.append(delta)
+            if !session.isEphemeral, Date().timeIntervalSince(lastPersist) > 1 {
+              lastPersist = Date()
+              try? db.update(messageId: assistant.id, text: buffer.snapshot, status: .streaming, inputTokens: nil, outputTokens: nil)
+            }
+          case .usage(let input, let output, let window):
+            usage = (input, output, window)
+          case .completed:
+            finalStatus = .complete
+          case .interrupted:
+            finalStatus = .interrupted
+          }
+        }
+      } catch {
+        finalStatus = .failed
+        session.errorMessage = error.localizedDescription
+      }
+      buffer.finish()
+      let text = buffer.snapshot
+      if let index = session.messages.firstIndex(where: { $0.id == assistant.id }) {
+        session.messages[index].text = text
+        session.messages[index].status = finalStatus
+        session.messages[index].inputTokens = usage?.input
+        session.messages[index].outputTokens = usage?.output
+      }
+      if let usage {
+        session.lastInputTokens = usage.input
+        if let window = usage.window { session.contextWindow = window }
+      }
+      session.streaming = nil
+      session.streamingMessageId = nil
+      if !session.isEphemeral {
+        try? db.update(messageId: assistant.id, text: text, status: finalStatus, inputTokens: usage?.input, outputTokens: usage?.output)
+        if let usage { try? db.updateContext(conversationId: session.id, lastInputTokens: usage.input, contextWindow: usage.window) }
+        reloadList()
+      } else if let threadID {
+        codex.purgeLogs(threadID: threadID)
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+import SwiftUI
+
+public struct MainView: View {
+  @Environment(AppModel.self) private var model
+  let startupError: String?
+  @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+  public init(startupError: String?) {
+    self.startupError = startupError
+  }
+
+  public var body: some View {
+    @Bindable var model = model
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      SidebarView()
+        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
+    } content: {
+      ConversationListView()
+        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
+    } detail: {
+      ChatView()
+    }
+    .alert("오류", isPresented: Binding(get: { model.lastError != nil }, set: { if !$0 { model.lastError = nil } })) {
+      Button("확인") { model.lastError = nil }
+    } message: {
+      Text(model.lastError ?? "")
+    }
+    .onAppear {
+      if let startupError { model.lastError = startupError }
+    }
+  }
+}
