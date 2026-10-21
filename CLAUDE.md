@@ -32,6 +32,7 @@ xcodebuild -project Galpi.xcodeproj -scheme Galpi -destination 'platform=macOS,a
 ```
 
 - `project.yml` 을 바꾸면 `xcodegen generate` 를 다시 실행한다. `run.sh` 는 수정 시각을 보고 자동으로 한다.
+- 터미널 빌드에는 `-skipMacroValidation` 을 붙인다. 의존 패키지의 `Equatable` 매크로가 Xcode 에서 승인되지 않은 환경에서는 이 플래그 없이는 빌드가 실패한다.
 - 배포 대상은 `project.yml` 의 `deploymentTarget` 한 곳이다. 현재는 Xcode 16.4 SDK 제약으로 15.0 이며, Xcode 26 설치 후 26.0 으로 올리는 것이 결정된 방향이다.
 - Swift 6 툴체인에서 언어 모드 5(`SWIFT_VERSION: 5.0`)로 빌드한다. 동시성 경고를 고치기 위해 `@unchecked Sendable` 이나 `nonisolated(unsafe)` 를 뿌리지 않는다.
 
@@ -42,6 +43,8 @@ xcodebuild -project Galpi.xcodeproj -scheme Galpi -destination 'platform=macOS,a
 - DB 스키마 변경은 `Database.migrator` 에 새 마이그레이션을 추가한다. 기존 마이그레이션은 수정하지 않는다. 여러 행을 바꾸는 작업은 ID 집합을 먼저 확정하고 트랜잭션 하나로 처리한다.
 - Codex 프로토콜 처리는 `Codex/` 안에서 끝낸다. 응답 필드 이름이나 JSON-RPC 세부가 `Model/`, `Views/` 로 새지 않게 한다. 턴 이벤트는 요청 식별자로 대상 대화를 확인한 뒤 반영한다.
 - 앱이 만드는 스레드는 `ephemeral`, `approvalPolicy: never`, 읽기 전용 샌드박스를 유지한다. 영구 스레드나 API 키 경로로 바꾸지 않는다.
+- 대화 하나는 앱이 떠 있는 동안 임시 스레드 하나를 재사용한다(`ChatSession.threadID`, 메모리 전용). 스레드가 없거나 `turn/start` 가 실패하면 새 스레드를 만들어 문맥 예산 안의 기록을 주입한다. 재시도·실패 뒤에는 `threadID` 를 nil 로 돌려 새 스레드에서 시작한다.
+- 턴 단계별 시간은 `Logger(subsystem: "com.lavumi.galpi", category: "turn")` 로 남긴다. 본문·프롬프트·모델 응답은 넣지 않는다.
 
 ## 데이터와 로그 규칙
 

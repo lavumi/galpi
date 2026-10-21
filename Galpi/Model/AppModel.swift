@@ -166,6 +166,8 @@ final class AppModel {
     let prompt = session.messages[index - 1].text
     let failed = session.messages.remove(at: index)
     if !session.isEphemeral { try? db.deletePermanentlyMessage(id: failed.id) }
+    // 기존 스레드에는 실패한 턴의 질문이 이미 들어가 있으므로 새 스레드에서 기록을 다시 주입한다.
+    session.threadID = nil
     run(session, prompt: prompt, model: resolvedModel(session), effort: session.conversation.effort)
   }
 
@@ -352,9 +354,7 @@ final class AppModel {
   private func run(_ session: ChatSession, prompt: String, model: String, effort: String?) {
     let selection = ContextBudget.select(messages: session.messages.dropLast().filter { $0.status != .failed },
                                          prompt: prompt, contextWindow: session.contextWindow)
-    session.contextNotice = selection.droppedTurns > 0
-      ? "문맥 예산을 넘어 오래된 \(selection.droppedTurns)개 턴은 이번 요청에 포함되지 않았습니다."
-      : nil
+    session.contextNotice = nil
 
     let assistant = Message.new(conversationId: session.id, ordinal: nextOrdinal(session), role: .assistant, text: "", status: .streaming, model: model)
     session.messages.append(assistant)
@@ -367,13 +367,16 @@ final class AppModel {
       guard let self else { return }
       var lastPersist = Date()
       var usage: (input: Int, output: Int, window: Int?)?
-      var threadID: String?
       var finalStatus: MessageStatus = .complete
       do {
-        for try await event in codex.runTurn(history: selection.items, prompt: prompt, model: model, effort: effort) {
+        for try await event in codex.runTurn(reusingThread: session.threadID, history: selection.items, prompt: prompt, model: model, effort: effort) {
           switch event {
-          case .started(let tid, _):
-            threadID = tid
+          case .started(let tid, _, let reused):
+            session.threadID = tid
+            // 기존 스레드를 이어 쓸 때는 Codex 가 문맥을 관리하므로 예산 안내는 새 스레드에 주입한 경우에만 뜬다.
+            if !reused, selection.droppedTurns > 0 {
+              session.contextNotice = "문맥 예산을 넘어 오래된 \(selection.droppedTurns)개 턴은 이번 요청에 포함되지 않았습니다."
+            }
           case .delta(let delta):
             buffer.append(delta)
             if !session.isEphemeral, Date().timeIntervalSince(lastPersist) > 1 {
@@ -391,6 +394,8 @@ final class AppModel {
       } catch {
         finalStatus = .failed
         session.errorMessage = error.localizedDescription
+        // 실패한 스레드는 버리고 다음 전송은 새 스레드에서 시작한다.
+        session.threadID = nil
       }
       buffer.finish()
       let text = buffer.snapshot
@@ -410,7 +415,7 @@ final class AppModel {
         try? db.update(messageId: assistant.id, text: text, status: finalStatus, inputTokens: usage?.input, outputTokens: usage?.output)
         if let usage { try? db.updateContext(conversationId: session.id, lastInputTokens: usage.input, contextWindow: usage.window) }
         reloadList()
-      } else if let threadID {
+      } else if let threadID = session.threadID {
         codex.purgeLogs(threadID: threadID)
       }
     }

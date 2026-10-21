@@ -20,6 +20,8 @@ GALPI_NO_LAUNCH=1 ./run.sh
 
 Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. 생성된 프로젝트는 커밋하지 않습니다.
 
+처음 빌드할 때 Xcode가 SwiftStreamingMarkdown이 쓰는 `Equatable` 매크로를 승인하라고 묻습니다. "Trust & Enable"을 한 번 누르면 이후 `xcodebuild build`도 플래그 없이 통과합니다. 승인 전에 터미널에서 빌드하려면 `-skipMacroValidation`을 붙입니다(`run.sh`는 이미 붙입니다).
+
 ## 구조
 
 - `project.yml`: xcodegen 프로젝트 정의. 의존성과 빌드 설정이 여기 있습니다.

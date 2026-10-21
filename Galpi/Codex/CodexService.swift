@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import Observation
+import os
 
 struct CodexModel: Identifiable, Hashable {
   let id: String
@@ -49,7 +50,8 @@ enum ConnectionState: Equatable {
 
 /// 한 턴을 실행하는 동안 UI로 흘러가는 이벤트.
 enum TurnEvent {
-  case started(threadID: String, turnID: String)
+  /// `reused` 가 true 면 대화가 쓰던 스레드에 턴만 추가한 것이고, false 면 새 스레드를 만들어 기록을 주입한 것이다.
+  case started(threadID: String, turnID: String, reused: Bool)
   case delta(String)
   case usage(inputTokens: Int, outputTokens: Int, contextWindow: Int?)
   case completed
@@ -90,12 +92,19 @@ final class CodexService {
   private let workspace: URL
   private let sqliteHome: URL
   private var listenerTask: Task<Void, Never>?
+  /// 단계별 소요 시간만 남긴다. 본문·프롬프트는 절대 넣지 않는다.
+  private let log = Logger(subsystem: "com.lavumi.galpi", category: "turn")
 
   private final class ActiveTurn {
     let continuation: AsyncThrowingStream<TurnEvent, Error>.Continuation
     var threadID: String?
     var turnID: String?
     var interruptRequested = false
+    var reused = false
+    var turnStartedAt: ContinuousClock.Instant?
+    var firstDeltaAt: ContinuousClock.Instant?
+    var deltaCount = 0
+    var outputChars = 0
     init(continuation: AsyncThrowingStream<TurnEvent, Error>.Continuation) { self.continuation = continuation }
   }
   private var activeTurn: ActiveTurn?
@@ -176,8 +185,9 @@ final class CodexService {
 
   // MARK: - Turns
 
-  /// 임시 스레드를 만들고 이전 기록을 주입한 뒤 새 턴을 실행한다. 동시 생성은 한 개로 제한한다.
-  func runTurn(history: [TurnHistoryItem], prompt: String, model: String, effort: String?) -> AsyncThrowingStream<TurnEvent, Error> {
+  /// 대화가 쓰던 스레드(`threadID`)가 있으면 거기에 턴만 추가한다. 없거나 실패하면 새 임시 스레드를 만들고
+  /// `history` 를 주입한 뒤 턴을 시작한다. 동시 생성은 한 개로 제한한다.
+  func runTurn(reusingThread threadID: String?, history: [TurnHistoryItem], prompt: String, model: String, effort: String?) -> AsyncThrowingStream<TurnEvent, Error> {
     AsyncThrowingStream { continuation in
       guard activeTurn == nil else {
         continuation.finish(throwing: TurnError.busy)
@@ -191,7 +201,7 @@ final class CodexService {
           self.activeTurn = nil
         }
       }
-      Task { await self.start(turn, history: history, prompt: prompt, model: model, effort: effort) }
+      Task { await self.start(turn, reusing: threadID, history: history, prompt: prompt, model: model, effort: effort) }
     }
   }
 
@@ -214,9 +224,26 @@ final class CodexService {
     }
   }
 
-  private func start(_ turn: ActiveTurn, history: [TurnHistoryItem], prompt: String, model: String, effort: String?) async {
+  private func start(_ turn: ActiveTurn, reusing existing: String?, history: [TurnHistoryItem], prompt: String, model: String, effort: String?) async {
     do {
       guard state == .connected else { throw TurnError.failed("Codex에 연결되어 있지 않습니다.") }
+
+      if let existing {
+        turn.threadID = existing
+        if turn.interruptRequested { finish(turn, with: .interrupted); return }
+        do {
+          try await startTurn(turn, threadID: existing, prompt: prompt, model: model, effort: effort, reused: true)
+          return
+        } catch {
+          // 스레드가 사라졌거나(app-server 재시작 등) 상태가 틀어진 경우. 새 스레드로 한 번 더 간다.
+          log.notice("turn/start on reused thread failed, falling back to a fresh thread: \(error.localizedDescription, privacy: .public)")
+          turn.threadID = nil
+          turn.turnID = nil
+        }
+      }
+
+      let clock = ContinuousClock()
+      var mark = clock.now
       let threadResult = try await process.request("thread/start", params: [
         "model": model,
         "cwd": workspace.path,
@@ -228,34 +255,49 @@ final class CodexService {
         throw TurnError.failed("Codex가 스레드를 만들지 못했습니다.")
       }
       turn.threadID = threadID
+      log.notice("thread/start \(Self.ms(since: mark, clock: clock)) ms")
       if turn.interruptRequested { finish(turn, with: .interrupted); return }
 
       if !history.isEmpty {
+        mark = clock.now
         let items: [[String: Any]] = history.map { item in
           let role = item.role == .user ? "user" : "assistant"
           let type = item.role == .user ? "input_text" : "output_text"
           return ["type": "message", "role": role, "content": [["type": type, "text": item.text]]]
         }
         try await process.request("thread/inject_items", params: ["threadId": threadID, "items": items])
+        log.notice("thread/inject_items \(Self.ms(since: mark, clock: clock)) ms, \(items.count) items")
       }
 
-      var params: [String: Any] = [
-        "threadId": threadID,
-        "model": model,
-        "approvalPolicy": "never",
-        "sandboxPolicy": ["type": "readOnly"],
-        "input": [["type": "text", "text": prompt]],
-      ]
-      if let effort { params["effort"] = effort }
-      let turnResult = try await process.request("turn/start", params: params)
-      if let turnID = turnResult["turn"]["id"].string, turn.turnID == nil {
-        turn.turnID = turnID
-        turn.continuation.yield(.started(threadID: threadID, turnID: turnID))
-      }
-      if turn.interruptRequested { interrupt() }
+      try await startTurn(turn, threadID: threadID, prompt: prompt, model: model, effort: effort, reused: false)
     } catch {
       finish(turn, throwing: error)
     }
+  }
+
+  private func startTurn(_ turn: ActiveTurn, threadID: String, prompt: String, model: String, effort: String?, reused: Bool) async throws {
+    var params: [String: Any] = [
+      "threadId": threadID,
+      "model": model,
+      "approvalPolicy": "never",
+      "sandboxPolicy": ["type": "readOnly"],
+      "input": [["type": "text", "text": prompt]],
+    ]
+    if let effort { params["effort"] = effort }
+    turn.reused = reused
+    turn.turnStartedAt = ContinuousClock.now
+    let turnResult = try await process.request("turn/start", params: params)
+    log.notice("turn/start ack \(Self.ms(since: turn.turnStartedAt!)) ms, reusedThread=\(reused), model=\(model, privacy: .public), effort=\(effort ?? "default", privacy: .public)")
+    if let turnID = turnResult["turn"]["id"].string, turn.turnID == nil {
+      turn.turnID = turnID
+      turn.continuation.yield(.started(threadID: threadID, turnID: turnID, reused: reused))
+    }
+    if turn.interruptRequested { interrupt() }
+  }
+
+  private static func ms(since start: ContinuousClock.Instant, clock: ContinuousClock = ContinuousClock()) -> Int {
+    let d = start.duration(to: clock.now)
+    return Int(d.components.seconds * 1000) + Int(d.components.attoseconds / 1_000_000_000_000_000)
   }
 
   private func finish(_ turn: ActiveTurn, with event: TurnEvent) {
@@ -305,11 +347,19 @@ final class CodexService {
     case "turn/started":
       if let turnID = params["turn"]["id"].string, turn.turnID == nil {
         turn.turnID = turnID
-        turn.continuation.yield(.started(threadID: threadID, turnID: turnID))
+        turn.continuation.yield(.started(threadID: threadID, turnID: turnID, reused: turn.reused))
         if turn.interruptRequested { interrupt() }
       }
     case "item/agentMessage/delta":
-      if let delta = params["delta"].string, !delta.isEmpty { turn.continuation.yield(.delta(delta)) }
+      if let delta = params["delta"].string, !delta.isEmpty {
+        if turn.firstDeltaAt == nil {
+          turn.firstDeltaAt = ContinuousClock.now
+          if let t0 = turn.turnStartedAt { log.notice("first delta \(Self.ms(since: t0)) ms after turn/start") }
+        }
+        turn.deltaCount += 1
+        turn.outputChars += delta.count
+        turn.continuation.yield(.delta(delta))
+      }
     case "thread/tokenUsage/updated":
       let usage = params["tokenUsage"]
       turn.continuation.yield(.usage(
@@ -317,6 +367,9 @@ final class CodexService {
         outputTokens: usage["last"]["outputTokens"].int ?? 0,
         contextWindow: usage["modelContextWindow"].int))
     case "turn/completed":
+      if let t0 = turn.turnStartedAt {
+        log.notice("turn/completed \(Self.ms(since: t0)) ms, status=\(params["turn"]["status"].string ?? "?", privacy: .public), deltas=\(turn.deltaCount), chars=\(turn.outputChars)")
+      }
       switch params["turn"]["status"].string {
       case "completed": finish(turn, with: .completed)
       case "failed":

@@ -14,6 +14,9 @@ final class ChatSession: Identifiable {
   var contextNotice: String?
   var lastInputTokens: Int?
   var contextWindow: Int?
+  /// 이 대화가 쓰고 있는 Codex 임시 스레드. 앱이 떠 있는 동안만 유지하고 저장하지 않는다.
+  /// nil 이면 다음 전송 때 새 스레드를 만들어 기록을 주입한다.
+  var threadID: String?
 
   nonisolated var id: String { conversationId }
   private let conversationId: String

@@ -35,16 +35,28 @@ struct ConversationListView: View {
 
       Divider()
 
-      List(selection: $selection) {
-        ForEach(model.hits) { hit in
-          ConversationRow(hit: hit, isSearching: !model.query.isEmpty)
-            .tag(hit.conversation.id)
-            .contextMenu { contextMenu(for: hit.conversation) }
+      ScrollViewReader { proxy in
+        List(selection: $selection) {
+          ForEach(model.hits) { hit in
+            ConversationRow(hit: hit, isSearching: !model.query.isEmpty)
+              .tag(hit.conversation.id)
+              .id(hit.conversation.id)
+              .contextMenu { contextMenu(for: hit.conversation) }
+          }
         }
-      }
-      .overlay {
-        if model.hits.isEmpty {
-          ContentUnavailableView(model.query.isEmpty ? "대화가 없습니다" : "검색 결과가 없습니다", systemImage: "bubble.left")
+        .overlay {
+          if model.hits.isEmpty {
+            ContentUnavailableView(model.query.isEmpty ? "대화가 없습니다" : "검색 결과가 없습니다", systemImage: "bubble.left")
+          }
+        }
+        .onChange(of: model.hits.map(\.conversation.id)) { old, new in
+          // 새 대화가 맨 위에 끼어들면 List 가 기존 오프셋을 유지해 그 행이 위로 잘린다. 선택된 행이 새로 나타난 경우에만 맞춰 준다.
+          guard let id = model.selectedId, new.contains(id), !old.contains(id) else { return }
+          proxy.scrollTo(id, anchor: .top)
+        }
+        .onChange(of: model.selectedId) { _, new in
+          guard let new, model.hits.contains(where: { $0.conversation.id == new }) else { return }
+          proxy.scrollTo(new)
         }
       }
     }
