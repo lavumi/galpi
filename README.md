@@ -36,11 +36,29 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 - 질문 전송, 스트리밍 답변, 중단, 실패한 답변 다시 보내기
 - SwiftStreamingMarkdown 기반 Markdown, 표, 코드 블록, 구문 강조, 코드 복사
 - 대화 제목·본문 검색
+- 대화 내부 찾기와 일치 위치 이동 (Cmd+F, Enter/Cmd+G 다음, Cmd+Shift+G 이전, Esc 닫기), 목록 검색 포커스 (Cmd+Shift+F)
+- 생성 중 다음 질문 큐잉: Enter 로 대기열에 추가, 빈 입력에서 한 번 더 Enter(1초 뒤)면 중단하고 즉시 전송
 - 즐겨찾기, 보관, 휴지통, 복구, 이름 변경
 - 답변과 질문 복사, 질문을 새 대화에서 수정해 이어가기
 - 기존 대화의 문맥을 복사한 private 대화
 - private 대화를 나중에 저장하거나 버리기
 - 입력 토큰 사용량과 문맥 예산 표시
+
+### 단축키
+
+| 단축키 | 동작 |
+| --- | --- |
+| Cmd+N / Cmd+Shift+N | 새 대화 / 기록 안 남기는 새 대화 |
+| Cmd+Return 또는 Enter | 보내기 (생성 중에는 대기열에 추가) |
+| Cmd+. | 답변 중단 |
+| Cmd+F / Cmd+Shift+F | 대화에서 찾기 / 목록 검색 포커스 |
+| Cmd+G / Cmd+Shift+G | 다음 / 이전 찾기 결과 |
+| Cmd+L | 입력창으로 이동 |
+| Cmd+Shift+C | 마지막 답변 복사 |
+| Cmd+D, Cmd+E, Cmd+Delete | 즐겨찾기, 보관, 휴지통 이동 |
+| Cmd+1~4 | 전체 / 즐겨찾기 / 보관함 / 휴지통 |
+| Cmd+Option+↑/↓ | 이전 / 다음 대화 |
+| Cmd+Shift+R | Codex 다시 연결 |
 
 대화 기록은 `~/Library/Application Support/Galpi/galpi.sqlite`에 저장됩니다. Codex의 인증과 기존 사용자 설정은 기존 Codex 환경을 사용하고, 갈피가 시작한 app-server의 상태·로그 DB는 `~/Library/Application Support/Galpi/codex-state`에 둡니다.
 

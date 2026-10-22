@@ -7,6 +7,7 @@ struct ConversationListView: View {
   @State private var renameText = ""
   @State private var confirmDelete: Set<String>?
   @State private var confirmEmptyTrash = false
+  @FocusState private var searchFocused: Bool
 
   var body: some View {
     @Bindable var model = model
@@ -16,6 +17,7 @@ struct ConversationListView: View {
           .foregroundStyle(.secondary)
         TextField("제목·본문 검색", text: $model.query)
           .textFieldStyle(.plain)
+          .focused($searchFocused)
           .accessibilityLabel("대화 검색")
         if !model.query.isEmpty {
           Button {
@@ -71,6 +73,7 @@ struct ConversationListView: View {
       if let new, selection != [new] { selection = [new] }
       if new == nil { selection = [] }
     }
+    .onChange(of: model.listSearchFocusTick) { _, _ in searchFocused = true }
     .navigationTitle(scopeTitle)
     .toolbar {
       ToolbarItemGroup {

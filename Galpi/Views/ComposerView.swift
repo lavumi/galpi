@@ -8,13 +8,34 @@ struct ComposerView: View {
 
   private var currentModel: CodexModel? { model.codex.models.first(where: { $0.id == selectedModel }) }
   private var isGenerating: Bool { model.codex.isGenerating }
+  private var hasText: Bool { !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+  private var queuedCount: Int { model.session?.queuedPrompts.count ?? 0 }
   private var canSend: Bool {
-    !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.codex.state == .connected && !isGenerating
+    hasText && model.codex.state == .connected && !isGenerating
   }
 
   var body: some View {
     @Bindable var model = model
     VStack(spacing: 8) {
+      if let session = model.session, !session.queuedPrompts.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          ForEach(Array(session.queuedPrompts.enumerated()), id: \.offset) { index, prompt in
+            HStack(spacing: 6) {
+              Image(systemName: "clock").font(.caption2).foregroundStyle(.secondary)
+              Text(prompt).font(.callout).lineLimit(1)
+              Spacer()
+              Button { session.queuedPrompts.remove(at: index) } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+              }
+              .buttonStyle(.borderless)
+              .help("대기열에서 제거")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+          }
+        }
+      }
       TextField("질문을 입력하세요 (Enter 전송, Option+Enter 줄바꿈)", text: $model.composerText, axis: .vertical)
         .textFieldStyle(.plain)
         .lineLimit(1...12)
@@ -23,7 +44,7 @@ struct ComposerView: View {
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
         .focused($focused)
-        .onSubmit { if canSend { send() } }
+        .onSubmit(send)
 
       HStack(spacing: 12) {
         Picker("모델", selection: $selectedModel) {
@@ -49,7 +70,18 @@ struct ComposerView: View {
 
         Spacer()
 
-        if isGenerating {
+        if let session = model.session, session.isGenerating {
+          if queuedCount > 0 {
+            Text("대기 \(queuedCount)개 · 빈 입력에서 Enter: 중단하고 바로 보내기")
+              .font(.caption).foregroundStyle(.secondary)
+          }
+          Button("중단", systemImage: "stop.fill") { model.stop() }
+            .keyboardShortcut(".", modifiers: .command)
+          Button(hasText ? "대기열에 추가" : "지금 보내기", systemImage: hasText ? "text.badge.plus" : "paperplane.fill") { send() }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!hasText && queuedCount == 0)
+        } else if isGenerating {
+          // 다른 대화가 생성 중이다. 전송은 완료 후 가능하다.
           Button("중단", systemImage: "stop.fill") { model.stop() }
             .keyboardShortcut(".", modifiers: .command)
         } else {
@@ -62,6 +94,7 @@ struct ComposerView: View {
     }
     .padding(12)
     .onAppear { syncDefaults() }
+    .onChange(of: model.composerFocusTick) { _, _ in focused = true }
     .onChange(of: model.codex.models.count) { _, _ in syncDefaults() }
     .onChange(of: model.codex.state) { _, _ in syncDefaults() }
     .onChange(of: model.session?.id) { _, _ in syncFromSession() }

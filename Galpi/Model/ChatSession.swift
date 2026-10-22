@@ -17,6 +17,10 @@ final class ChatSession: Identifiable {
   /// 이 대화가 쓰고 있는 Codex 임시 스레드. 앱이 떠 있는 동안만 유지하고 저장하지 않는다.
   /// nil 이면 다음 전송 때 새 스레드를 만들어 기록을 주입한다.
   var threadID: String?
+  /// 생성 중에 쌓아 둔 다음 질문들. 턴이 끝나면 순서대로 자동 전송한다. 메모리 전용.
+  var queuedPrompts: [String] = []
+  /// 큐잉 직후 실수로 Enter 를 연타해 중단되는 것을 막기 위한 기준 시각.
+  var lastEnqueuedAt: Date?
 
   nonisolated var id: String { conversationId }
   private let conversationId: String

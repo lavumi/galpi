@@ -3,13 +3,27 @@ import SwiftUI
 
 struct ChatView: View {
   @Environment(AppModel.self) private var model
+  @State private var searchQuery = ""
+  @State private var searchIndex = 0
+
+  /// 질의를 포함하는 메시지 ID 목록. 강조와 이동은 메시지 단위로 한다.
+  private var searchMatches: [String] {
+    guard model.chatSearchVisible, let session = model.session, !searchQuery.isEmpty else { return [] }
+    return session.messages.filter { $0.text.localizedCaseInsensitiveContains(searchQuery) }.map(\.id)
+  }
 
   var body: some View {
+    let matches = searchMatches
+    let currentMatchId = matches.isEmpty ? nil : matches[min(searchIndex, matches.count - 1)]
     VStack(spacing: 0) {
       if let session = model.session {
         SessionHeader(session: session)
+        if model.chatSearchVisible {
+          ChatSearchBar(query: $searchQuery, index: $searchIndex, matchCount: matches.count,
+                        onNavigate: scrollToCurrentMatch, onClose: closeSearch)
+        }
         Divider()
-        MessageListView(session: session)
+        MessageListView(session: session, currentMatchId: currentMatchId)
       } else {
         EmptyChatView()
       }
@@ -18,6 +32,75 @@ struct ChatView: View {
     }
     .navigationTitle(model.session?.conversation.title ?? "새 대화")
     .navigationSubtitle(model.session?.isEphemeral == true ? "기록 안 남기기" : "")
+    .onChange(of: searchQuery) { _, _ in
+      searchIndex = 0
+      scrollToCurrentMatch()
+    }
+    .onChange(of: model.session?.id) { _, _ in closeSearch() }
+  }
+
+  private func scrollToCurrentMatch() {
+    let matches = searchMatches
+    guard !matches.isEmpty else { return }
+    model.pendingScrollMessageId = matches[min(searchIndex, matches.count - 1)]
+  }
+
+  private func closeSearch() {
+    model.chatSearchVisible = false
+    searchQuery = ""
+    searchIndex = 0
+  }
+}
+
+struct ChatSearchBar: View {
+  @Environment(AppModel.self) private var model
+  @Binding var query: String
+  @Binding var index: Int
+  let matchCount: Int
+  let onNavigate: () -> Void
+  let onClose: () -> Void
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+      TextField("대화에서 찾기", text: $query)
+        .textFieldStyle(.plain)
+        .focused($focused)
+        .onSubmit(next)
+      if !query.isEmpty {
+        Text(matchCount == 0 ? "결과 없음" : "\(index + 1)/\(matchCount)")
+          .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+      }
+      Button(action: previous) { Image(systemName: "chevron.up") }
+        .keyboardShortcut("g", modifiers: [.command, .shift])
+        .disabled(matchCount == 0)
+        .help("이전 결과")
+      Button(action: next) { Image(systemName: "chevron.down") }
+        .keyboardShortcut("g", modifiers: .command)
+        .disabled(matchCount == 0)
+        .help("다음 결과")
+      Button(action: onClose) { Image(systemName: "xmark") }
+        .help("닫기 (Esc)")
+    }
+    .buttonStyle(.borderless)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 6)
+    .onExitCommand(perform: onClose)
+    .onAppear { focused = true }
+    .onChange(of: model.chatSearchFocusTick) { _, _ in focused = true }
+  }
+
+  private func next() {
+    guard matchCount > 0 else { return }
+    index = (index + 1) % matchCount
+    onNavigate()
+  }
+
+  private func previous() {
+    guard matchCount > 0 else { return }
+    index = (index - 1 + matchCount) % matchCount
+    onNavigate()
   }
 }
 
@@ -31,7 +114,7 @@ struct EmptyChatView: View {
       Text("새 대화").font(.title3.weight(.medium))
       Text("기록은 이 Mac에 저장되며, 답변 생성을 위해 대화 내용이 AI 서비스에 전송됩니다.")
         .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-      if model.nextChatPrivate {
+      if model.nextChatPrivate || model.nextChatPrivateOnce {
         Label("이 대화는 기록을 남기지 않습니다", systemImage: "eye.slash").font(.callout).foregroundStyle(.orange)
       }
       Spacer()
@@ -71,6 +154,7 @@ struct SessionHeader: View {
 struct MessageListView: View {
   @Environment(AppModel.self) private var model
   let session: ChatSession
+  var currentMatchId: String?
 
   private var config: MarkdownRenderConfig {
     MarkdownRenderConfig.default
@@ -86,7 +170,8 @@ struct MessageListView: View {
             Label(notice, systemImage: "scissors").font(.caption).foregroundStyle(.secondary)
           }
           ForEach(session.messages) { message in
-            MessageRowView(session: session, message: message, config: config) {
+            MessageRowView(session: session, message: message, config: config,
+                           isCurrentMatch: message.id == currentMatchId) {
               proxy.scrollTo("bottom", anchor: .bottom)
             }
               .id(message.id)
@@ -133,6 +218,7 @@ struct MessageRowView: View {
   let session: ChatSession
   let message: Message
   let config: MarkdownRenderConfig
+  var isCurrentMatch = false
   let onGrow: () -> Void
   @State private var copied = false
 
@@ -161,6 +247,9 @@ struct MessageRowView: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(isCurrentMatch ? 6 : 0)
+    .background(isCurrentMatch ? Color.yellow.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+    .padding(isCurrentMatch ? -6 : 0)
   }
 
   @ViewBuilder

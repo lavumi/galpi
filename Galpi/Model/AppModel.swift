@@ -32,6 +32,14 @@ final class AppModel {
   var nextChatPrivate: Bool
   var pendingScrollMessageId: String?
   var lastError: String?
+  /// Cmd+F 대화 내부 찾기 바 표시 여부.
+  var chatSearchVisible = false
+  /// 메뉴 커맨드가 뷰 포커스를 건드릴 수 없으므로 틱 증가를 신호로 쓴다.
+  var chatSearchFocusTick = 0
+  var listSearchFocusTick = 0
+  var composerFocusTick = 0
+  /// Cmd+Shift+N: 설정과 무관하게 다음 새 대화 한 번만 기록 안 남기기.
+  var nextChatPrivateOnce = false
 
   /// 기록 안 남기기 대화는 여기만 산다. 앱을 끄면 사라진다.
   private var ephemeralSessions: [String: ChatSession] = [:]
@@ -103,6 +111,7 @@ final class AppModel {
       session = nil
       return
     }
+    nextChatPrivateOnce = false
     if session?.id == id { return }
     if let ephemeral = ephemeralSessions[id] {
       session = ephemeral
@@ -118,15 +127,101 @@ final class AppModel {
   }
 
   func newChat() {
+    showAllScope()
     selectedId = nil
     session = nil
     composerText = ""
+    nextChatPrivateOnce = false
+  }
+
+  func newPrivateChat() {
+    newChat()
+    nextChatPrivateOnce = true
+    focusComposer()
+  }
+
+  func requestChatSearch() {
+    guard session != nil else { return }
+    chatSearchVisible = true
+    chatSearchFocusTick += 1
+  }
+
+  func requestListSearch() {
+    listSearchFocusTick += 1
+  }
+
+  func focusComposer() {
+    composerFocusTick += 1
+  }
+
+  /// 새 대화는 어느 범위에서 시작하든 전체 대화에서 보인다.
+  private func showAllScope() {
+    if scope != .all { scope = .all }
+  }
+
+  // MARK: - 현재 대화 단축키 동작
+
+  func toggleFavoriteCurrent() {
+    guard let session, !session.isEphemeral else { return }
+    setFavorite(!session.conversation.isFavorite, ids: [session.id])
+  }
+
+  func toggleArchiveCurrent() {
+    guard let session, !session.isEphemeral else { return }
+    setArchived(!session.conversation.isArchived, ids: [session.id])
+  }
+
+  func trashCurrent() {
+    guard let session, !session.isEphemeral, session.conversation.deletedAt == nil else { return }
+    moveToTrash(ids: [session.id])
+  }
+
+  func copyLastAnswer() {
+    guard let text = session?.messages.last(where: { $0.role == .assistant && !$0.text.isEmpty })?.text else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+  }
+
+  /// 목록에서 현재 대화 기준 위/아래 대화를 연다. 선택이 없으면 끝에서 시작한다.
+  func selectAdjacentConversation(offset: Int) {
+    let ids = hits.map(\.conversation.id)
+    guard !ids.isEmpty else { return }
+    if let current = selectedId.flatMap({ ids.firstIndex(of: $0) }) {
+      selectedId = ids[min(max(current + offset, 0), ids.count - 1)]
+    } else {
+      selectedId = offset > 0 ? ids[0] : ids[ids.count - 1]
+    }
   }
 
   // MARK: - Sending
 
   func send(model: String, effort: String?) {
     let prompt = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // 현재 대화가 생성 중이면: 입력이 있으면 큐에 쌓고, 빈 Enter 는 1초 안전 갭 뒤 중단 후 즉시 전송.
+    if let session, session.isGenerating {
+      if !prompt.isEmpty {
+        session.queuedPrompts.append(prompt)
+        session.lastEnqueuedAt = Date()
+        composerText = ""
+      } else if !session.queuedPrompts.isEmpty,
+                let enqueued = session.lastEnqueuedAt,
+                Date().timeIntervalSince(enqueued) >= 1 {
+        // 중단되면 run 의 완료 경로가 큐를 즉시 이어 보낸다.
+        codex.interrupt()
+      }
+      return
+    }
+
+    // 유휴 상태에서 큐가 남아 있으면(직전 턴 실패 등) 빈 Enter 로 재개한다.
+    if prompt.isEmpty, let session, !session.queuedPrompts.isEmpty {
+      let model = model.isEmpty ? defaultModel : model
+      guard !model.isEmpty, codex.state == .connected, !codex.isGenerating else { return }
+      let next = session.queuedPrompts.removeFirst()
+      dispatch(prompt: next, session: session, model: model, effort: effort)
+      return
+    }
+
     guard !prompt.isEmpty else { return }
     guard !codex.isGenerating else {
       lastError = TurnError.busy.localizedDescription
@@ -142,8 +237,15 @@ final class AppModel {
       lastError = "사용할 수 있는 모델이 없습니다. 연결 상태를 확인하세요."
       return
     }
-    let session = self.session ?? makeSession(firstPrompt: prompt, model: model, effort: effort, ephemeral: nextChatPrivate)
+    let session = self.session ?? makeSession(firstPrompt: prompt, model: model, effort: effort,
+                                              ephemeral: nextChatPrivate || nextChatPrivateOnce)
+    nextChatPrivateOnce = false
     composerText = ""
+    dispatch(prompt: prompt, session: session, model: model, effort: effort)
+  }
+
+  /// 확정된 대화에 사용자 메시지를 추가하고 턴을 시작한다.
+  private func dispatch(prompt: String, session: ChatSession, model: String, effort: String?) {
     session.errorMessage = nil
     session.conversation.model = model
     session.conversation.effort = effort
@@ -221,6 +323,7 @@ final class AppModel {
       for message in saved.messages { try db.save(message, touching: saved.conversation) }
       ephemeralSessions.removeValue(forKey: source.id)
       session = saved
+      showAllScope()
       reloadList()
       selectedId = saved.id
     } catch {
@@ -287,7 +390,10 @@ final class AppModel {
       try? db.save(conversation)
     }
     self.session = session
-    if !ephemeral { selectedId = session.id }
+    if !ephemeral {
+      showAllScope()
+      selectedId = session.id
+    }
     return session
   }
 
@@ -312,6 +418,7 @@ final class AppModel {
         for message in copied { try db.save(message, touching: conversation) }
       } catch { lastError = error.localizedDescription }
       self.session = session
+      showAllScope()
       reloadList()
       selectedId = session.id
     }
@@ -417,6 +524,11 @@ final class AppModel {
         reloadList()
       } else if let threadID = session.threadID {
         codex.purgeLogs(threadID: threadID)
+      }
+      // 완료·중단 후 큐에 쌓인 다음 질문을 즉시 이어 보낸다. 실패는 사용자가 확인하도록 멈춘다.
+      if finalStatus != .failed, !session.queuedPrompts.isEmpty {
+        let next = session.queuedPrompts.removeFirst()
+        dispatch(prompt: next, session: session, model: model, effort: effort)
       }
     }
   }
