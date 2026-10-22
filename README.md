@@ -4,7 +4,7 @@ macOS에서 Codex와 나눈 기술 대화를 로컬에 저장하고, Markdown과
 
 ## 실행
 
-필요한 환경은 macOS 15 이상, Xcode 16.4 이상, xcodegen, 그리고 로그인된 Codex CLI입니다.
+필요한 환경은 macOS 26 이상, Xcode 27 이상, xcodegen, 그리고 로그인된 Codex CLI입니다.
 
 ```sh
 brew install xcodegen
@@ -16,6 +16,12 @@ codex login
 
 ```sh
 GALPI_NO_LAUNCH=1 ./run.sh
+```
+
+Spotlight나 런처(Tinycast 등)에서 찾으려면 `/Applications`에 설치합니다. Release 빌드를 복사하고 기존 버전은 휴지통으로 보냅니다.
+
+```sh
+./run.sh install
 ```
 
 Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. 생성된 프로젝트는 커밋하지 않습니다.
@@ -38,6 +44,7 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 - 대화 제목·본문 검색
 - 대화 내부 찾기와 일치 위치 이동 (Cmd+F, Enter/Cmd+G 다음, Cmd+Shift+G 이전, Esc 닫기), 목록 검색 포커스 (Cmd+Shift+F)
 - 생성 중 다음 질문 큐잉: Enter 로 대기열에 추가, 빈 입력에서 한 번 더 Enter(1초 뒤)면 중단하고 즉시 전송
+- 전역 핫키 빠른 질문: 어느 앱에서든 Cmd+Shift+Space 로 입력 패널을 열고 Enter 로 전송. 항상 기록 안 남기기로 시작하며 저장은 대화 화면에서 선택 (갈피 실행 중일 때)
 - 즐겨찾기, 보관, 휴지통, 복구, 이름 변경
 - 답변과 질문 복사, 질문을 새 대화에서 수정해 이어가기
 - 기존 대화의 문맥을 복사한 private 대화
@@ -58,6 +65,7 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 | Cmd+D, Cmd+E, Cmd+Delete | 즐겨찾기, 보관, 휴지통 이동 |
 | Cmd+1~4 | 전체 / 즐겨찾기 / 보관함 / 휴지통 |
 | Cmd+Option+↑/↓ | 이전 / 다음 대화 |
+| Cmd+Shift+Space | (전역) 빠른 질문 패널 |
 | Cmd+Shift+R | Codex 다시 연결 |
 
 대화 기록은 `~/Library/Application Support/Galpi/galpi.sqlite`에 저장됩니다. Codex의 인증과 기존 사용자 설정은 기존 Codex 환경을 사용하고, 갈피가 시작한 app-server의 상태·로그 DB는 `~/Library/Application Support/Galpi/codex-state`에 둡니다.

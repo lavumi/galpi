@@ -33,7 +33,7 @@ xcodebuild -project Galpi.xcodeproj -scheme Galpi -destination 'platform=macOS,a
 
 - `project.yml` 을 바꾸면 `xcodegen generate` 를 다시 실행한다. `run.sh` 는 수정 시각을 보고 자동으로 한다.
 - 터미널 빌드에는 `-skipMacroValidation` 을 붙인다. 의존 패키지의 `Equatable` 매크로가 Xcode 에서 승인되지 않은 환경에서는 이 플래그 없이는 빌드가 실패한다.
-- 배포 대상은 `project.yml` 의 `deploymentTarget` 한 곳이다. 현재는 Xcode 16.4 SDK 제약으로 15.0 이며, Xcode 26 설치 후 26.0 으로 올리는 것이 결정된 방향이다.
+- 배포 대상은 `project.yml` 의 `deploymentTarget` 한 곳이며 26.0 이다. Xcode 27 이상으로 빌드한다.
 - Swift 6 툴체인에서 언어 모드 5(`SWIFT_VERSION: 5.0`)로 빌드한다. 동시성 경고를 고치기 위해 `@unchecked Sendable` 이나 `nonisolated(unsafe)` 를 뿌리지 않는다.
 
 ## 코드 규칙

@@ -20,6 +20,7 @@ struct GalpiApp: App {
         .frame(minWidth: 900, minHeight: 560)
         .task {
           NSApplication.shared.activate(ignoringOtherApps: true)
+          QuickAskController.shared.setup(model: model)
           await model.start()
         }
     }

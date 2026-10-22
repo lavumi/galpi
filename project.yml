@@ -1,12 +1,11 @@
 name: Galpi
 options:
   bundleIdPrefix: com.lavumi
-  # Xcode 26 설치 후 "26.0" 으로 올린다. 그 전까지는 16.4 SDK 가 아는 최신 값만 쓸 수 있다.
   deploymentTarget:
-    macOS: "15.0"
+    macOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
-  xcodeVersion: "16.4"
+  xcodeVersion: "27.1"
 
 packages:
   # 상위 패키지가 HighlightSwift 를 커밋 고정으로 의존하므로 버전 범위 대신 v0.7.0 커밋을 고정한다.
