@@ -42,29 +42,41 @@ final class QuickAskController {
     panel?.orderOut(nil)
   }
 
+  /// 입력 줄 수에 맞춰 패널을 키운다. 아래 모서리를 고정하고 위로 자란다.
+  func resize(to size: CGSize) {
+    guard let panel, panel.isVisible, size.height > 0 else { return }
+    var frame = panel.frame
+    guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
+    frame.origin.x += (frame.width - size.width) / 2
+    frame.size = size
+    panel.setFrame(frame, display: true)
+  }
+
   private func show() {
     guard let model else { return }
     if panel == nil {
-      let p = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 96),
-                           styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
+      // 테두리 없는 패널. titled 스타일은 타이틀바 안전 영역이 콘텐츠 위에 큰 여백을 만든다.
+      let p = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 80),
+                           styleMask: [.nonactivatingPanel, .borderless],
                            backing: .buffered, defer: false)
-      p.titleVisibility = .hidden
-      p.titlebarAppearsTransparent = true
-      p.standardWindowButton(.closeButton)?.isHidden = true
-      p.standardWindowButton(.miniaturizeButton)?.isHidden = true
-      p.standardWindowButton(.zoomButton)?.isHidden = true
       p.level = .floating
       p.collectionBehavior = [.canJoinAllSpaces, .transient]
       p.isMovableByWindowBackground = true
       p.isReleasedWhenClosed = false
+      p.backgroundColor = .clear
+      p.isOpaque = false
+      p.hasShadow = true
       panel = p
     }
     // 열 때마다 새 뷰를 만들어 입력과 포커스를 초기화한다.
-    panel?.contentView = NSHostingView(rootView: QuickAskView(onClose: { [weak self] in self?.close() }).environment(model))
+    let hosting = NSHostingView(rootView: QuickAskView(onClose: { [weak self] in self?.close() }).environment(model))
+    panel?.contentView = hosting
+    panel?.setContentSize(hosting.fittingSize)
     if let screen = NSScreen.main, let panel {
       let frame = panel.frame
       let x = screen.visibleFrame.midX - frame.width / 2
-      let y = screen.visibleFrame.minY + screen.visibleFrame.height * 0.68
+      // 화면 하단 중앙에 고정한다.
+      let y = screen.visibleFrame.minY + 32
       panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
     NSApp.activate(ignoringOtherApps: true)
@@ -85,15 +97,23 @@ struct QuickAskView: View {
         TextField("갈피에 질문하기", text: $text, axis: .vertical)
           .textFieldStyle(.plain)
           .font(.title3)
-          .lineLimit(1...4)
+          .lineLimit(1...15)
           .focused($focused)
           .onSubmit(submit)
+          .commandReturnInsertsNewline()
       }
-      Text("Enter: 기록 안 남기는 새 대화로 전송 · 저장은 대화 화면에서 · Esc: 닫기")
+      Text("Enter: 기록 안 남기는 새 대화로 전송 · Cmd+Enter: 줄바꿈 · Esc: 닫기")
         .font(.caption).foregroundStyle(.tertiary)
     }
     .padding(16)
     .frame(width: 560)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
+    .onGeometryChange(for: CGSize.self) { proxy in
+      proxy.size
+    } action: { size in
+      QuickAskController.shared.resize(to: size)
+    }
     .onExitCommand(perform: onClose)
     .onAppear {
       text = ""
@@ -105,10 +125,21 @@ struct QuickAskView: View {
   private func submit() {
     let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !prompt.isEmpty else { return }
-    // 퀵챗은 항상 기록 안 남기기로 시작한다. 저장은 대화 화면의 "이 대화 저장" 으로 한다.
-    model.newPrivateChat()
-    model.composerText = prompt
-    model.send(model: "", effort: nil)
+    if let generating = model.generatingSession {
+      // 생성 중이면 현재 세션을 건드리지 않고 그 대화의 대기열에 쌓는다. 턴이 끝나면 자동 전송된다.
+      generating.queuedPrompts.append(prompt)
+      generating.lastEnqueuedAt = Date()
+      if generating.isEphemeral {
+        model.session = generating
+      } else {
+        model.selectedId = generating.id
+      }
+    } else {
+      // 퀵챗은 항상 기록 안 남기기로 시작한다. 저장은 대화 화면의 "이 대화 저장" 으로 한다.
+      model.newPrivateChat()
+      model.composerText = prompt
+      model.send(model: "", effort: nil)
+    }
     onClose()
     NSApp.activate(ignoringOtherApps: true)
     // NSApp.windows 전체를 올리면 숨어 있던 설정 창 등이 빈 창으로 딸려 나온다. 보이는 메인 창만 앞으로 가져온다.

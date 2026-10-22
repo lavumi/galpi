@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ComposerView: View {
   @Environment(AppModel.self) private var model
@@ -11,7 +12,7 @@ struct ComposerView: View {
   private var hasText: Bool { !model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
   private var queuedCount: Int { model.session?.queuedPrompts.count ?? 0 }
   private var canSend: Bool {
-    hasText && model.codex.state == .connected && !isGenerating
+    (hasText || !model.pendingAttachments.isEmpty) && model.codex.state == .connected && !isGenerating
   }
 
   var body: some View {
@@ -36,7 +37,34 @@ struct ComposerView: View {
           }
         }
       }
-      TextField("질문을 입력하세요 (Enter 전송, Option+Enter 줄바꿈)", text: $model.composerText, axis: .vertical)
+      if !model.pendingAttachments.isEmpty {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 6) {
+            ForEach(model.pendingAttachments) { attachment in
+              HStack(spacing: 6) {
+                if attachment.kind == .image, let image = NSImage(contentsOfFile: attachment.path) {
+                  Image(nsImage: image)
+                    .resizable().aspectRatio(contentMode: .fill)
+                    .frame(width: 32, height: 32)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                } else {
+                  Image(systemName: attachment.kind == .image ? "photo" : "doc.text")
+                    .foregroundStyle(.secondary)
+                }
+                Text(attachment.filename).font(.caption).lineLimit(1).frame(maxWidth: 160)
+                Button { model.removeAttachment(id: attachment.id) } label: {
+                  Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+              }
+              .padding(.horizontal, 8)
+              .padding(.vertical, 4)
+              .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            }
+          }
+        }
+      }
+      TextField("질문을 입력하세요 (Enter 전송, Cmd+Enter 줄바꿈)", text: $model.composerText, axis: .vertical)
         .textFieldStyle(.plain)
         .lineLimit(1...12)
         .font(.body)
@@ -45,6 +73,10 @@ struct ComposerView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
         .focused($focused)
         .onSubmit(send)
+        .commandReturnInsertsNewline()
+        .onPasteCommand(of: [UTType.fileURL, UTType.png, UTType.tiff]) { _ in
+          model.pasteAttachmentsFromPasteboard()
+        }
 
       HStack(spacing: 12) {
         Picker("모델", selection: $selectedModel) {
@@ -78,7 +110,6 @@ struct ComposerView: View {
           Button("중단", systemImage: "stop.fill") { model.stop() }
             .keyboardShortcut(".", modifiers: .command)
           Button(hasText ? "대기열에 추가" : "지금 보내기", systemImage: hasText ? "text.badge.plus" : "paperplane.fill") { send() }
-            .keyboardShortcut(.return, modifiers: .command)
             .disabled(!hasText && queuedCount == 0)
         } else if isGenerating {
           // 다른 대화가 생성 중이다. 전송은 완료 후 가능하다.
@@ -86,13 +117,21 @@ struct ComposerView: View {
             .keyboardShortcut(".", modifiers: .command)
         } else {
           Button("보내기", systemImage: "paperplane.fill") { send() }
-            .keyboardShortcut(.return, modifiers: .command)
             .disabled(!canSend)
         }
       }
       .font(.callout)
     }
     .padding(12)
+    .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+      for provider in providers {
+        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+          guard let url, url.isFileURL else { return }
+          Task { @MainActor in model.addAttachment(fileURL: url) }
+        }
+      }
+      return true
+    }
     .onAppear { syncDefaults() }
     .onChange(of: model.composerFocusTick) { _, _ in focused = true }
     .onChange(of: model.codex.models.count) { _, _ in syncDefaults() }
@@ -131,5 +170,23 @@ struct ComposerView: View {
     case "xhigh": return "매우 높음"
     default: return effort
     }
+  }
+}
+
+/// Cmd+Enter 로 커서 위치에 줄바꿈을 넣는다. Enter 는 onSubmit(보내기)으로 간다.
+private struct CommandReturnNewline: ViewModifier {
+  func body(content: Content) -> some View {
+    content.onKeyPress(.return, phases: .down) { press in
+      guard press.modifiers.contains(.command) else { return .ignored }
+      guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
+      editor.insertText("\n", replacementRange: editor.selectedRange())
+      return .handled
+    }
+  }
+}
+
+extension View {
+  func commandReturnInsertsNewline() -> some View {
+    modifier(CommandReturnNewline())
   }
 }

@@ -45,6 +45,7 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 - 대화 내부 찾기와 일치 위치 이동 (Cmd+F, Enter/Cmd+G 다음, Cmd+Shift+G 이전, Esc 닫기), 목록 검색 포커스 (Cmd+Shift+F)
 - 생성 중 다음 질문 큐잉: Enter 로 대기열에 추가, 빈 입력에서 한 번 더 Enter(1초 뒤)면 중단하고 즉시 전송
 - 전역 핫키 빠른 질문: 어느 앱에서든 Cmd+Shift+Space 로 입력 패널을 열고 Enter 로 전송. 항상 기록 안 남기기로 시작하며 저장은 대화 화면에서 선택 (갈피 실행 중일 때)
+- 첨부: 이미지(클립보드 붙여넣기·파일), PDF·텍스트 파일을 입력창에 붙여넣거나 드래그. 이미지는 모델에 직접 전달하고 PDF·텍스트는 추출한 내용을 프롬프트에 포함
 - 메뉴 바 전용 앱: Dock 에 나타나지 않고 상단바 책갈피 아이콘으로 열기·빠른 질문·설정·종료. 설정의 "Dock 아이콘 표시"로 되돌릴 수 있음
 - 즐겨찾기, 보관, 휴지통, 복구, 이름 변경
 - 답변과 질문 복사, 질문을 새 대화에서 수정해 이어가기
@@ -57,13 +58,14 @@ Xcode에서 열려면 `xcodegen generate` 후 `Galpi.xcodeproj`를 엽니다. �
 | 단축키 | 동작 |
 | --- | --- |
 | Cmd+N / Cmd+Shift+N | 새 대화 / 기록 안 남기는 새 대화 |
-| Cmd+Return 또는 Enter | 보내기 (생성 중에는 대기열에 추가) |
+| Enter | 보내기 (생성 중에는 대기열에 추가) |
+| Cmd+Enter / Option+Enter | 줄바꿈 |
 | Cmd+. | 답변 중단 |
 | Cmd+F / Cmd+Shift+F | 대화에서 찾기 / 목록 검색 포커스 |
 | Cmd+G / Cmd+Shift+G | 다음 / 이전 찾기 결과 |
 | Cmd+L | 입력창으로 이동 |
 | Cmd+Shift+C | 마지막 답변 복사 |
-| Cmd+D, Cmd+E, Cmd+Delete | 즐겨찾기, 보관, 휴지통 이동 |
+| Cmd+D, Cmd+E, Cmd+Shift+Delete | 즐겨찾기, 보관, 휴지통 이동 |
 | Cmd+1~4 | 전체 / 즐겨찾기 / 보관함 / 휴지통 |
 | Cmd+Option+↑/↓ | 이전 / 다음 대화 |
 | Cmd+Shift+Space | (전역) 빠른 질문 패널 |

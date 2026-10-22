@@ -234,10 +234,30 @@ struct MessageRowView: View {
         actions
       }
       if message.role == .user {
-        Text(message.text)
-          .textSelection(.enabled)
-          .padding(12)
-          .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
+        let imagePaths = AppModel.imageAttachmentPaths(in: message.text)
+        let display = AppModel.displayText(of: message.text)
+        VStack(alignment: .leading, spacing: 8) {
+          if !display.isEmpty {
+            Text(display).textSelection(.enabled)
+          }
+          if !imagePaths.isEmpty {
+            HStack(spacing: 8) {
+              ForEach(imagePaths, id: \.self) { path in
+                if let image = NSImage(contentsOfFile: path) {
+                  Image(nsImage: image)
+                    .resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                  Label("이미지를 찾을 수 없음", systemImage: "photo.badge.exclamationmark")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+              }
+            }
+          }
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
       } else if isStreamingThis, let streaming = session.streaming {
         StreamingBody(streaming: streaming, config: config, onGrow: onGrow)
       } else if message.text.isEmpty {

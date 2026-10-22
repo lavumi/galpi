@@ -76,7 +76,7 @@ struct GalpiApp: App {
           .keyboardShortcut("e", modifiers: .command)
           .disabled(model.session == nil || model.session?.isEphemeral == true)
         Button("휴지통으로 이동") { model.trashCurrent() }
-          .keyboardShortcut(.delete, modifiers: .command)
+          .keyboardShortcut(.delete, modifiers: [.command, .shift])
           .disabled(model.session == nil || model.session?.isEphemeral == true)
       }
     }

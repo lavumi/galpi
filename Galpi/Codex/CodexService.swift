@@ -187,7 +187,7 @@ final class CodexService {
 
   /// 대화가 쓰던 스레드(`threadID`)가 있으면 거기에 턴만 추가한다. 없거나 실패하면 새 임시 스레드를 만들고
   /// `history` 를 주입한 뒤 턴을 시작한다. 동시 생성은 한 개로 제한한다.
-  func runTurn(reusingThread threadID: String?, history: [TurnHistoryItem], prompt: String, model: String, effort: String?) -> AsyncThrowingStream<TurnEvent, Error> {
+  func runTurn(reusingThread threadID: String?, history: [TurnHistoryItem], prompt: String, images: [String] = [], model: String, effort: String?) -> AsyncThrowingStream<TurnEvent, Error> {
     AsyncThrowingStream { continuation in
       guard activeTurn == nil else {
         continuation.finish(throwing: TurnError.busy)
@@ -201,7 +201,7 @@ final class CodexService {
           self.activeTurn = nil
         }
       }
-      Task { await self.start(turn, reusing: threadID, history: history, prompt: prompt, model: model, effort: effort) }
+      Task { await self.start(turn, reusing: threadID, history: history, prompt: prompt, images: images, model: model, effort: effort) }
     }
   }
 
@@ -224,7 +224,7 @@ final class CodexService {
     }
   }
 
-  private func start(_ turn: ActiveTurn, reusing existing: String?, history: [TurnHistoryItem], prompt: String, model: String, effort: String?) async {
+  private func start(_ turn: ActiveTurn, reusing existing: String?, history: [TurnHistoryItem], prompt: String, images: [String], model: String, effort: String?) async {
     do {
       guard state == .connected else { throw TurnError.failed("Codex에 연결되어 있지 않습니다.") }
 
@@ -232,7 +232,7 @@ final class CodexService {
         turn.threadID = existing
         if turn.interruptRequested { finish(turn, with: .interrupted); return }
         do {
-          try await startTurn(turn, threadID: existing, prompt: prompt, model: model, effort: effort, reused: true)
+          try await startTurn(turn, threadID: existing, prompt: prompt, images: images, model: model, effort: effort, reused: true)
           return
         } catch {
           // 스레드가 사라졌거나(app-server 재시작 등) 상태가 틀어진 경우. 새 스레드로 한 번 더 간다.
@@ -269,19 +269,21 @@ final class CodexService {
         log.notice("thread/inject_items \(Self.ms(since: mark, clock: clock)) ms, \(items.count) items")
       }
 
-      try await startTurn(turn, threadID: threadID, prompt: prompt, model: model, effort: effort, reused: false)
+      try await startTurn(turn, threadID: threadID, prompt: prompt, images: images, model: model, effort: effort, reused: false)
     } catch {
       finish(turn, throwing: error)
     }
   }
 
-  private func startTurn(_ turn: ActiveTurn, threadID: String, prompt: String, model: String, effort: String?, reused: Bool) async throws {
+  private func startTurn(_ turn: ActiveTurn, threadID: String, prompt: String, images: [String], model: String, effort: String?, reused: Bool) async throws {
+    var input: [[String: Any]] = images.map { ["type": "localImage", "path": $0] }
+    input.append(["type": "text", "text": prompt])
     var params: [String: Any] = [
       "threadId": threadID,
       "model": model,
       "approvalPolicy": "never",
       "sandboxPolicy": ["type": "readOnly"],
-      "input": [["type": "text", "text": prompt]],
+      "input": input,
     ]
     if let effort { params["effort"] = effort }
     turn.reused = reused

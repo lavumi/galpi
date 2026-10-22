@@ -8,6 +8,8 @@ enum SettingsKey {
   static let defaultEffort = "defaultEffort"
   static let newChatsPrivate = "newChatsPrivate"
   static let showInDock = "showInDock"
+  static let lastModel = "lastModel"
+  static let lastEffort = "lastEffort"
 }
 
 @MainActor
@@ -41,6 +43,10 @@ final class AppModel {
   var composerFocusTick = 0
   /// Cmd+Shift+N: 설정과 무관하게 다음 새 대화 한 번만 기록 안 남기기.
   var nextChatPrivateOnce = false
+  /// 지금 답변을 생성 중인 세션. 퀵챗이 큐잉 대상을 찾을 때 쓴다.
+  private(set) var generatingSession: ChatSession?
+  /// 입력창에 붙어 있는 전송 전 첨부.
+  var pendingAttachments: [ComposerAttachment] = []
 
   /// 기록 안 남기기 대화는 여기만 산다. 앱을 끄면 사라진다.
   private var ephemeralSessions: [String: ChatSession] = [:]
@@ -89,11 +95,17 @@ final class AppModel {
     if let saved = UserDefaults.standard.string(forKey: SettingsKey.defaultModel), codex.models.contains(where: { $0.id == saved }) {
       return saved
     }
+    // 설정에서 고정하지 않았으면 마지막으로 사용한 모델을 이어 쓴다.
+    if let last = UserDefaults.standard.string(forKey: SettingsKey.lastModel), codex.models.contains(where: { $0.id == last }) {
+      return last
+    }
     return codex.models.first(where: \.isDefault)?.id ?? codex.models.first?.id ?? ""
   }
 
   var defaultEffort: String? {
-    UserDefaults.standard.string(forKey: SettingsKey.defaultEffort)
+    if let saved = UserDefaults.standard.string(forKey: SettingsKey.defaultEffort), !saved.isEmpty { return saved }
+    if let last = UserDefaults.standard.string(forKey: SettingsKey.lastEffort), !last.isEmpty { return last }
+    return nil
   }
 
   // MARK: - List
@@ -201,6 +213,10 @@ final class AppModel {
 
     // 현재 대화가 생성 중이면: 입력이 있으면 큐에 쌓고, 빈 Enter 는 1초 안전 갭 뒤 중단 후 즉시 전송.
     if let session, session.isGenerating {
+      guard pendingAttachments.isEmpty else {
+        lastError = "첨부는 답변이 끝난 뒤 보낼 수 있습니다."
+        return
+      }
       if !prompt.isEmpty {
         session.queuedPrompts.append(prompt)
         session.lastEnqueuedAt = Date()
@@ -215,7 +231,7 @@ final class AppModel {
     }
 
     // 유휴 상태에서 큐가 남아 있으면(직전 턴 실패 등) 빈 Enter 로 재개한다.
-    if prompt.isEmpty, let session, !session.queuedPrompts.isEmpty {
+    if prompt.isEmpty, pendingAttachments.isEmpty, let session, !session.queuedPrompts.isEmpty {
       let model = model.isEmpty ? defaultModel : model
       guard !model.isEmpty, codex.state == .connected, !codex.isGenerating else { return }
       let next = session.queuedPrompts.removeFirst()
@@ -223,7 +239,7 @@ final class AppModel {
       return
     }
 
-    guard !prompt.isEmpty else { return }
+    guard !prompt.isEmpty || !pendingAttachments.isEmpty else { return }
     guard !codex.isGenerating else {
       lastError = TurnError.busy.localizedDescription
       return
@@ -238,15 +254,23 @@ final class AppModel {
       lastError = "사용할 수 있는 모델이 없습니다. 연결 상태를 확인하세요."
       return
     }
-    let session = self.session ?? makeSession(firstPrompt: prompt, model: model, effort: effort,
+    let titleSource = prompt.isEmpty ? pendingAttachments.map(\.filename).joined(separator: ", ") : prompt
+    let session = self.session ?? makeSession(firstPrompt: titleSource, model: model, effort: effort,
                                               ephemeral: nextChatPrivate || nextChatPrivateOnce)
     nextChatPrivateOnce = false
+    let attachments = finalizeAttachments(pendingAttachments, ephemeral: session.isEphemeral)
+    let fullText = Self.composeText(prompt: prompt, attachments: attachments)
     composerText = ""
-    dispatch(prompt: prompt, session: session, model: model, effort: effort)
+    pendingAttachments = []
+    dispatch(prompt: fullText, session: session, model: model, effort: effort,
+             images: attachments.filter { $0.kind == .image }.map(\.path))
   }
 
   /// 확정된 대화에 사용자 메시지를 추가하고 턴을 시작한다.
-  private func dispatch(prompt: String, session: ChatSession, model: String, effort: String?) {
+  private func dispatch(prompt: String, session: ChatSession, model: String, effort: String?, images: [String] = []) {
+    // 다음 새 대화가 같은 모델·강도를 이어 쓰도록 마지막 사용값을 기억한다.
+    UserDefaults.standard.set(model, forKey: SettingsKey.lastModel)
+    UserDefaults.standard.set(effort ?? "", forKey: SettingsKey.lastEffort)
     session.errorMessage = nil
     session.conversation.model = model
     session.conversation.effort = effort
@@ -255,7 +279,7 @@ final class AppModel {
     session.messages.append(userMessage)
     persist(session, message: userMessage)
 
-    run(session, prompt: prompt, model: model, effort: effort)
+    run(session, prompt: prompt, model: model, effort: effort, images: images)
   }
 
   func stop() {
@@ -459,7 +483,7 @@ final class AppModel {
     }
   }
 
-  private func run(_ session: ChatSession, prompt: String, model: String, effort: String?) {
+  private func run(_ session: ChatSession, prompt: String, model: String, effort: String?, images: [String] = []) {
     let selection = ContextBudget.select(messages: session.messages.dropLast().filter { $0.status != .failed },
                                          prompt: prompt, contextWindow: session.contextWindow)
     session.contextNotice = nil
@@ -470,6 +494,7 @@ final class AppModel {
     let buffer = StreamingMessage()
     session.streaming = buffer
     session.streamingMessageId = assistant.id
+    generatingSession = session
 
     Task { [weak self] in
       guard let self else { return }
@@ -477,7 +502,7 @@ final class AppModel {
       var usage: (input: Int, output: Int, window: Int?)?
       var finalStatus: MessageStatus = .complete
       do {
-        for try await event in codex.runTurn(reusingThread: session.threadID, history: selection.items, prompt: prompt, model: model, effort: effort) {
+        for try await event in codex.runTurn(reusingThread: session.threadID, history: selection.items, prompt: prompt, images: images, model: model, effort: effort) {
           switch event {
           case .started(let tid, _, let reused):
             session.threadID = tid
@@ -519,6 +544,7 @@ final class AppModel {
       }
       session.streaming = nil
       session.streamingMessageId = nil
+      if generatingSession === session { generatingSession = nil }
       if !session.isEphemeral {
         try? db.update(messageId: assistant.id, text: text, status: finalStatus, inputTokens: usage?.input, outputTokens: usage?.output)
         if let usage { try? db.updateContext(conversationId: session.id, lastInputTokens: usage.input, contextWindow: usage.window) }
