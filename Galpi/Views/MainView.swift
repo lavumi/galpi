@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MainView: View {
   @Environment(AppModel.self) private var model
+  @Environment(\.openWindow) private var openWindow
   let startupError: String?
   @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
@@ -23,6 +24,8 @@ struct MainView: View {
     }
     .onAppear {
       if let startupError { model.lastError = startupError }
+      // 퀵챗이 닫힌 메인 창을 다시 열 수 있도록 openWindow 액션을 넘겨 둔다.
+      QuickAskController.shared.openMainWindow = { openWindow(id: "main") }
     }
   }
 }

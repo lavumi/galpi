@@ -6,6 +6,7 @@ struct SettingsView: View {
   @AppStorage(SettingsKey.defaultModel) private var defaultModel = ""
   @AppStorage(SettingsKey.defaultEffort) private var defaultEffort = ""
   @AppStorage(SettingsKey.newChatsPrivate) private var newChatsPrivate = false
+  @AppStorage(SettingsKey.showInDock) private var showInDock = false
 
   var body: some View {
     Form {
@@ -27,6 +28,13 @@ struct SettingsView: View {
         }
         Toggle("새 대화는 항상 기록 안 남기기", isOn: $newChatsPrivate)
           .onChange(of: newChatsPrivate) { _, new in model.nextChatPrivate = new }
+      }
+      Section("표시") {
+        Toggle("Dock 아이콘 표시", isOn: $showInDock)
+          .onChange(of: showInDock) { _, new in
+            NSApp.setActivationPolicy(new ? .regular : .accessory)
+            NSApp.activate(ignoringOtherApps: true)
+          }
       }
       Section("저장 위치") {
         LabeledContent("기록 DB", value: model.supportDirectory.appendingPathComponent("galpi.sqlite").path)

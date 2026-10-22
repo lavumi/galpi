@@ -38,6 +38,8 @@ targets:
         CFBundleShortVersionString: "0.1"
         CFBundleVersion: "1"
         LSApplicationCategoryType: public.app-category.productivity
+        # 메뉴 바 전용 앱. Dock 표시는 설정에서 setActivationPolicy(.regular) 로 승격한다.
+        LSUIElement: true
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSHighResolutionCapable: true
         NSSupportsAutomaticTermination: false

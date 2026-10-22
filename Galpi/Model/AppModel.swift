@@ -7,6 +7,7 @@ enum SettingsKey {
   static let defaultModel = "defaultModel"
   static let defaultEffort = "defaultEffort"
   static let newChatsPrivate = "newChatsPrivate"
+  static let showInDock = "showInDock"
 }
 
 @MainActor

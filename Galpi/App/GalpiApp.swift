@@ -7,14 +7,16 @@ struct GalpiApp: App {
   @State private var startupError: String?
 
   init() {
-    NSApplication.shared.setActivationPolicy(.regular)
+    // 기본은 메뉴 바 전용. Info.plist 의 LSUIElement 가 Dock 등록 자체를 막고, 설정에서 켠 경우에만 승격한다.
+    let showInDock = UserDefaults.standard.object(forKey: SettingsKey.showInDock) as? Bool ?? false
+    if showInDock { NSApplication.shared.setActivationPolicy(.regular) }
     let boot = AppModel.bootstrap()
     _model = State(initialValue: boot.model)
     _startupError = State(initialValue: boot.startupError)
   }
 
   var body: some Scene {
-    WindowGroup("갈피") {
+    WindowGroup("갈피", id: "main") {
       MainView(startupError: startupError)
         .environment(model)
         .frame(minWidth: 900, minHeight: 560)
@@ -83,5 +85,27 @@ struct GalpiApp: App {
       SettingsView()
         .environment(model)
     }
+
+    MenuBarExtra("갈피", systemImage: "bookmark.fill") {
+      MenuBarMenu()
+        .environment(model)
+    }
+  }
+}
+
+struct MenuBarMenu: View {
+  @Environment(AppModel.self) private var model
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Button("갈피 열기") {
+      openWindow(id: "main")
+      NSApp.activate(ignoringOtherApps: true)
+    }
+    Button("빠른 질문") { QuickAskController.shared.toggle() }
+    Divider()
+    SettingsLink { Text("설정…") }
+    Divider()
+    Button("갈피 종료") { NSApp.terminate(nil) }
   }
 }

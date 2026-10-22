@@ -15,6 +15,8 @@ final class QuickAskController {
   private var panel: NSPanel?
   private var hotKeyRef: EventHotKeyRef?
   private weak var model: AppModel?
+  /// 메인 창이 닫혀 있을 때 다시 열기 위한 openWindow 액션. MainView 가 등록한다.
+  var openMainWindow: (() -> Void)?
 
   func setup(model: AppModel) {
     guard self.model == nil else { return }
@@ -112,6 +114,8 @@ struct QuickAskView: View {
     // NSApp.windows 전체를 올리면 숨어 있던 설정 창 등이 빈 창으로 딸려 나온다. 보이는 메인 창만 앞으로 가져온다.
     if let main = NSApp.windows.first(where: { !($0 is NSPanel) && $0.isVisible && $0.canBecomeMain }) {
       main.makeKeyAndOrderFront(nil)
+    } else {
+      QuickAskController.shared.openMainWindow?()
     }
   }
 }
