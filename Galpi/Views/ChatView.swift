@@ -263,7 +263,8 @@ struct MessageRowView: View {
       } else if message.text.isEmpty {
         Text(message.status == .failed ? "답변을 받지 못했습니다." : "비어 있는 답변").foregroundStyle(.secondary).italic()
       } else {
-        MarkdownView(text: message.text, config: config)
+        // 과거에 저장된 답변에 남은 인용 지시문도 표시 시점에 치환한다.
+        MarkdownView(text: Citations.render(message.text), config: config)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)

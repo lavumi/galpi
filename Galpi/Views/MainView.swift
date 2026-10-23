@@ -27,5 +27,10 @@ struct MainView: View {
       // 퀵챗이 닫힌 메인 창을 다시 열 수 있도록 openWindow 액션을 넘겨 둔다.
       QuickAskController.shared.openMainWindow = { openWindow(id: "main") }
     }
+    // 본문 링크(file:// 포함)를 명시적으로 기본 앱에서 연다.
+    .environment(\.openURL, OpenURLAction { url in
+      NSWorkspace.shared.open(url)
+      return .handled
+    })
   }
 }

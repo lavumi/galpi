@@ -18,7 +18,7 @@ spike/               단계 0 렌더링 검증용 POC. 참고용으로만 두고
 ```
 
 - 단일 모듈이므로 접근 제어는 `private`/`internal` 만 쓴다. `public` 은 필요 없다.
-- 의존성은 GRDB 와 SwiftStreamingMarkdown 두 개이며 `project.yml` 의 `packages` 에 선언한다. SwiftStreamingMarkdown 은 상위가 HighlightSwift 를 커밋 고정으로 의존하므로 버전 범위 대신 커밋을 고정한다. 새 의존성 추가는 먼저 제안한다.
+- 의존성은 GRDB 와 SwiftStreamingMarkdown 두 개이며 `project.yml` 의 `packages` 에 선언한다. SwiftStreamingMarkdown 은 취소선 스타일 패치 때문에 `vendor/SwiftStreamingMarkdown` 에 벤더링한 사본을 쓴다. 원본 커밋과 패치 목록은 `vendor/SwiftStreamingMarkdown/UPSTREAM.md` 에 있고, 업스트림을 올릴 때 패치를 다시 적용한다. 새 의존성 추가는 먼저 제안한다.
 - 코드가 커져 모듈 분리가 필요해지면 그때 로컬 패키지로 뽑는다. 미리 나누지 않는다.
 
 ## 빌드와 테스트

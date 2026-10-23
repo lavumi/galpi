@@ -8,10 +8,9 @@ options:
   xcodeVersion: "27.1"
 
 packages:
-  # 상위 패키지가 HighlightSwift 를 커밋 고정으로 의존하므로 버전 범위 대신 v0.7.0 커밋을 고정한다.
+  # 취소선 스타일 패치 때문에 벤더링한 사본을 쓴다. 원본 커밋과 패치 목록은 vendor/.../UPSTREAM.md 참고.
   SwiftStreamingMarkdown:
-    url: https://github.com/microsoft/SwiftStreamingMarkdown
-    revision: 5f7c04e0558df6146f90d482edb62cb456986bda
+    path: vendor/SwiftStreamingMarkdown
   GRDB:
     url: https://github.com/groue/GRDB.swift
     from: 7.9.0

@@ -209,7 +209,21 @@ final class CodexService {
     guard let turn = activeTurn else { return }
     turn.interruptRequested = true
     guard let threadID = turn.threadID, let turnID = turn.turnID else { return }
-    Task { _ = try? await process.request("turn/interrupt", params: ["threadId": threadID, "turnId": turnID]) }
+    log.notice("turn/interrupt 요청")
+    Task {
+      do {
+        _ = try await process.request("turn/interrupt", params: ["threadId": threadID, "turnId": turnID])
+      } catch {
+        log.notice("turn/interrupt 전송 실패: \(error.localizedDescription, privacy: .public)")
+      }
+    }
+    // 서버가 3초 안에 턴을 끝내지 않으면 로컬에서 중단 처리해 UI 와 대기열을 살린다.
+    Task { [weak self] in
+      try? await Task.sleep(for: .seconds(3))
+      guard let self, let current = self.activeTurn, current === turn else { return }
+      self.log.notice("turn/interrupt 응답 없음, 로컬에서 중단 처리")
+      self.finish(turn, with: .interrupted)
+    }
   }
 
   /// 기록 안 남기기 대화가 끝나면 앱 전용 sqlite_home 의 Codex 로그에서 해당 스레드 행을 지운다.
@@ -331,6 +345,7 @@ final class CodexService {
     switch notification.method {
     case "galpi/processExited":
       let stderr = params["stderr"].string ?? ""
+      log.notice("app-server 종료 감지, status=\(params["status"].int ?? -1)")
       state = .failed("Codex 프로세스가 종료되었습니다. " + stderr.split(separator: "\n").suffix(2).joined(separator: " "))
       if let turn = activeTurn { finish(turn, throwing: TurnError.failed("Codex 연결이 끊겼습니다.")) }
       return
@@ -379,7 +394,9 @@ final class CodexService {
       default: finish(turn, with: .interrupted)
       }
     case "error":
-      guard params["willRetry"].bool != true else { return }
+      let willRetry = params["willRetry"].bool == true
+      log.notice("server error code=\(params["error"]["code"].int ?? -1), willRetry=\(willRetry)")
+      guard !willRetry else { return }
       finish(turn, throwing: TurnError.failed(params["error"]["message"].string ?? "Codex 오류"))
     default:
       break

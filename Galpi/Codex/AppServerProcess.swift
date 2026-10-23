@@ -29,8 +29,9 @@ final class AppServerProcess {
     let params: JSON
   }
 
-  let notifications: AsyncStream<Notification>
-  private let notificationContinuation: AsyncStream<Notification>.Continuation
+  /// 알림 스트림은 1회용이라 프로세스를 띄울 때마다 새로 만든다. 재연결 후 구독이 죽는 것을 막는다.
+  private(set) var notifications: AsyncStream<Notification>
+  private var notificationContinuation: AsyncStream<Notification>.Continuation
 
   private var process: Process?
   private var stdinHandle: FileHandle?
@@ -49,6 +50,9 @@ final class AppServerProcess {
   /// 사용자 환경(CODEX_HOME, config.toml)은 그대로 쓰되, 상태·로그 DB만 앱 디렉토리로 돌린다.
   func launch(executable: URL, workingDirectory: URL, sqliteHome: URL, path: String) throws {
     if isRunning { return }
+    var cont: AsyncStream<Notification>.Continuation!
+    notifications = AsyncStream(bufferingPolicy: .unbounded) { cont = $0 }
+    notificationContinuation = cont
     try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: sqliteHome, withIntermediateDirectories: true)
 
@@ -189,5 +193,6 @@ final class AppServerProcess {
     }
     pending.removeAll()
     notificationContinuation.yield(Notification(method: "galpi/processExited", params: JSON(["status": Int(status), "stderr": stderrText])))
+    notificationContinuation.finish()
   }
 }

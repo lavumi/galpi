@@ -10,3 +10,6 @@ xcuserdata/
 .swiftpm/
 
 .DS_Store
+
+# 전역 gitignore 가 vendor/ 를 무시하지만 이 저장소는 벤더링한 패키지를 커밋한다.
+!vendor/

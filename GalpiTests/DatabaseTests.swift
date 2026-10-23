@@ -1,5 +1,29 @@
 import XCTest
+import SwiftStreamingMarkdown
 @testable import Galpi
+
+final class MarkdownTildeTests: XCTestCase {
+  func testCitationDirectiveBecomesFileLink() {
+    let input = "명시되어 있습니다. :codex-file-citation{path=\"/Users/lavumi/Downloads/MRP-2000 사용자 설명서v1.3.pdf\" purpose=\"source\"}"
+    let output = Citations.render(input)
+    XCTAssertFalse(output.contains(":codex-file-citation"))
+    XCTAssertTrue(output.contains("[MRP-2000 사용자 설명서v1.3.pdf](file:///Users/lavumi/Downloads/MRP-2000%20"))
+    XCTAssertEqual(Citations.trimmingIncompleteDirective("본문 :codex-file-citation{path=\"/a"), "본문 ")
+    XCTAssertEqual(Citations.trimmingIncompleteDirective("1~2 범위"), "1~2 범위")
+  }
+
+  func testLoneTildeIsEscapedButCodeAndStrikethroughAreKept() {
+    XCTAssertEqual(
+      MarkdownParserImpl.escapingLoneTildes(in: "보통 100~1,000Hz로, GPS의 1~20Hz보다 높다"),
+      "보통 100\\~1,000Hz로, GPS의 1\\~20Hz보다 높다")
+    XCTAssertEqual(
+      MarkdownParserImpl.escapingLoneTildes(in: "\u{60}~/.codex\u{60} 는 그대로, ~~지움~~ 도 그대로"),
+      "\u{60}~/.codex\u{60} 는 그대로, ~~지움~~ 도 그대로")
+    XCTAssertEqual(
+      MarkdownParserImpl.escapingLoneTildes(in: "\u{60}\u{60}\u{60}\na ~ b\n\u{60}\u{60}\u{60}\n범위 1~2"),
+      "\u{60}\u{60}\u{60}\na ~ b\n\u{60}\u{60}\u{60}\n범위 1\\~2")
+  }
+}
 
 final class DatabaseTests: XCTestCase {
   func testTrashRestoreAndSearch() throws {
